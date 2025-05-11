@@ -250,7 +250,8 @@ tail -f finetune_moto_gpt_on_calvin.log
 #### Fine-tuning on RT-1 dataset
 - Modify the `video_dir` and `lmdb_dir` fields in [moto_gpt/configs/data/rt1.yaml](moto_gpt/configs/data/rt1.yaml)
 
-- Config the paths in [moto_gpt/configs/train/data_rt1-model_actPredTrue_motionPredTrue_visionMaeLarge_seq2_chunk3_maskProb0.5-train_lr0.001_bs512-aug_shiftTrue_resizedCropFalse-resume_from_predLatentOnly_oxe_Epoch10.yaml](moto_gpt/configs/train/data_rt1-model_actPredTrue_motionPredTrue_visionMaeLarge_seq2_chunk3_maskProb0.5-train_lr0.001_bs512-aug_shiftTrue_resizedCropFalse-resume_from_predLatentOnly_oxe_Epoch10.yaml)
+- Config the paths in [moto_gpt/configs/train/data_rt1-model_actPredTrue_motionPredTrue_visionMaeLarge_seq2_chunk3_maskProb0.5-train_lr0.0001_bs512-aug_shiftTrue_resizedCropFalse-resume_from_predLatentOnly_oxe_Epoch10.yaml](
+moto_gpt/configs/train/data_rt1-model_actPredTrue_motionPredTrue_visionMaeLarge_seq2_chunk3_maskProb0.5-train_lr0.0001_bs512-aug_shiftTrue_resizedCropFalse-resume_from_predLatentOnly_oxe_Epoch10.yaml)
 
 - Run the following commands:
 
