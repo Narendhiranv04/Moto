@@ -9,6 +9,7 @@ from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
 from torch.utils.tensorboard import SummaryWriter
 import torch
+from torchvision.transforms import ColorJitter
 from common.data.datasets import DataPrefetcher
 from moto_gpt.src.trainers.trainer_utils import cross_entropy, masked_loss, visualize_latent_motion_gen
 import omegaconf
@@ -67,16 +68,25 @@ class MotoGPT_Trainer:
             self.print('load ', resume_ckpt_path, '\nmissing ', missing_root_keys, '\nunexpected ', unexpected_keys, '\nmismatched ', mismatched_param_names)
         
         
-        optimizer = torch.optim.AdamW(moto_gpt.parameters(), lr=lr_max, weight_decay=weight_decay, fused=True)
+        self.contrastive_mlp = torch.nn.Sequential(
+            torch.nn.Linear(moto_gpt.hidden_size, moto_gpt.hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(moto_gpt.hidden_size, moto_gpt.hidden_size)
+        )
+
+        optimizer = torch.optim.AdamW(
+            list(moto_gpt.parameters()) + list(self.contrastive_mlp.parameters()),
+            lr=lr_max, weight_decay=weight_decay, fused=True
+        )
         total_prints_per_epoch = len(train_dataloader.dataset) // (print_steps * bs_per_gpu * accelerator.num_processes)
         scheduler = get_cosine_schedule_with_warmup(
             optimizer, 
             num_warmup_steps=min(num_warmup_epochs*total_prints_per_epoch, 5000000 // (print_steps * bs_per_gpu * accelerator.num_processes)),
             num_training_steps=num_epochs*total_prints_per_epoch,
         )
-        moto_gpt, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
-            moto_gpt, optimizer, train_dataloader, eval_dataloader, 
-            device_placement=[True, True, False, False]
+        moto_gpt, self.contrastive_mlp, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
+            moto_gpt, self.contrastive_mlp, optimizer, train_dataloader, eval_dataloader,
+            device_placement=[True, True, True, False, False]
         )
         if latent_motion_tokenizer is not None:
             latent_motion_tokenizer = latent_motion_tokenizer.to(accelerator.device)
@@ -93,6 +103,7 @@ class MotoGPT_Trainer:
         self.train_prefetcher = DataPrefetcher(train_dataloader, self.device, lang_tokenizer=lang_tokenizer)
         self.eval_prefetcher = DataPrefetcher(eval_dataloader, self.device, lang_tokenizer=lang_tokenizer)
         self.rgb_preprocessor = rgb_preprocessor.to(self.device)
+        self.color_jitter = ColorJitter(brightness=0.4, contrast=0.4)
         self.lang_tokenizer = lang_tokenizer
         self.save_path = save_path
         self.save_epochs = save_epochs
@@ -152,11 +163,13 @@ class MotoGPT_Trainer:
                 'action_arm': torch.tensor(0).float().to(self.device),
                 'action_gripper': torch.tensor(0).float().to(self.device),
                 'latent_motion': torch.tensor(0).float().to(self.device),
+                'contrastive': torch.tensor(0).float().to(self.device),
             }
             eval_log_loss = {
                 'action_arm': torch.tensor(0).float().to(self.device),
                 'action_gripper': torch.tensor(0).float().to(self.device),
                 'latent_motion': torch.tensor(0).float().to(self.device),
+                'contrastive': torch.tensor(0).float().to(self.device),
             }
             
             cum_load_time = 0 
@@ -351,8 +364,26 @@ class MotoGPT_Trainer:
             rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
             rgb_seq = self.rgb_preprocessor(rgb_seq, train=train)
             rgb_initial = rgb_seq[:,:1]
+            # create augmented sequence using color jitter on the first frame
+            with torch.no_grad():
+                aug_init = batch['rgb_initial'].float() / 255.0
+                b, t1, c1, h1, w1 = aug_init.shape
+                aug_init = aug_init.view(-1, c1, h1, w1)
+                aug_init = self.color_jitter(aug_init)
+                aug_init = (aug_init * 255.0).clamp(0,255).to(torch.uint8)
+                aug_init = aug_init.view(b, t1, c1, h1, w1)
+            rgb_seq_aug = torch.cat([aug_init, batch['rgb_future']], dim=1)
+            rgb_seq_aug = self.rgb_preprocessor(rgb_seq_aug, train=train)
+            aug_rgb_initial = rgb_seq_aug[:,:1]
         else:
             rgb_initial = self.rgb_preprocessor(batch['rgb_initial'], train=train)
+            with torch.no_grad():
+                aug_init = batch['rgb_initial'].float() / 255.0
+                aug_init = aug_init.view(-1, aug_init.shape[2], aug_init.shape[3], aug_init.shape[4])
+                aug_init = self.color_jitter(aug_init)
+                aug_init = (aug_init * 255.0).clamp(0,255).to(torch.uint8)
+                aug_init = aug_init.view_as(batch['rgb_initial'])
+            aug_rgb_initial = self.rgb_preprocessor(aug_init, train=train)
 
         # obtain ground-truth latent motion ids
         if self.moto_gpt_config.latent_motion_pred:
@@ -378,6 +409,16 @@ class MotoGPT_Trainer:
             train=True,
             lang_attention_mask=batch['lang_attention_mask'],
         )
+
+        pred_aug = self.moto_gpt(
+            rgb=aug_rgb_initial,
+            language=batch['lang_input_ids'],
+            attention_mask=attention_mask,
+            latent_motion_ids=latent_motion_ids,
+            latent_mask=batch['latent_mask'],
+            train=True,
+            lang_attention_mask=batch['lang_attention_mask'],
+        )
     
         loss = {}
         device = batch['rgb_initial'].device
@@ -398,7 +439,29 @@ class MotoGPT_Trainer:
         
         loss['action_gripper'] = masked_loss(pred['gripper_action_preds'], batch['actions'][..., -1:].float(), batch['mask'], 0, gripper_action_loss_func) if pred['gripper_action_preds'] is not None else torch.tensor(0.0).to(device)
         loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+
+        def _get_latent_embedding(latent_logits):
+            probs = F.softmax(latent_logits, dim=-1)
+            embed_weight = self.moto_gpt.embed_latent_motion.weight
+            emb = torch.einsum('btld,dh->btlh', probs, embed_weight)
+            emb = emb.mean(dim=2).mean(dim=1)
+            emb = self.contrastive_mlp(emb)
+            emb = F.normalize(emb, dim=-1)
+            return emb
+
+        if (pred['latent_motion_preds'] is not None) and (pred_aug['latent_motion_preds'] is not None):
+            z1 = _get_latent_embedding(pred['latent_motion_preds'])
+            z2 = _get_latent_embedding(pred_aug['latent_motion_preds'])
+            temperature = 0.1
+            logits_mat = torch.matmul(z1, z2.T) / temperature
+            labels = torch.arange(z1.shape[0], device=device)
+            loss_contrastive = (F.cross_entropy(logits_mat, labels) + F.cross_entropy(logits_mat.T, labels)) / 2
+        else:
+            loss_contrastive = torch.tensor(0.0).to(device)
+
+        loss['contrastive'] = loss_contrastive
         total_loss = 100 * loss['action_arm'] + loss['action_gripper'] + loss['latent_motion']
+        total_loss = total_loss + loss_contrastive
         loss['total_loss'] = total_loss
         return loss
 
