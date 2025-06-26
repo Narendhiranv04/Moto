@@ -104,6 +104,7 @@ class MotoGPT_Trainer:
         self.eval_prefetcher = DataPrefetcher(eval_dataloader, self.device, lang_tokenizer=lang_tokenizer)
         self.rgb_preprocessor = rgb_preprocessor.to(self.device)
         self.color_jitter = ColorJitter(brightness=0.4, contrast=0.4)
+        self.gaussian_std = 0.1
         self.lang_tokenizer = lang_tokenizer
         self.save_path = save_path
         self.save_epochs = save_epochs
@@ -363,18 +364,32 @@ class MotoGPT_Trainer:
         if self.moto_gpt_config.latent_motion_pred:
             rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
             rgb_seq = self.rgb_preprocessor(rgb_seq, train=train)
-            rgb_initial = rgb_seq[:,:1]
-            # create augmented sequence using color jitter on the first frame
+            rgb_initial = rgb_seq[:, :1]
+
+            # create augmented sequence using color jitter on the first frame and
+            # on the frame at t-1 with optional gaussian noise
             with torch.no_grad():
                 aug_init = batch['rgb_initial'].float() / 255.0
                 b, t1, c1, h1, w1 = aug_init.shape
                 aug_init = aug_init.view(-1, c1, h1, w1)
                 aug_init = self.color_jitter(aug_init)
-                aug_init = (aug_init * 255.0).clamp(0,255).to(torch.uint8)
+                aug_init = (aug_init * 255.0).clamp(0, 255).to(torch.uint8)
                 aug_init = aug_init.view(b, t1, c1, h1, w1)
-            rgb_seq_aug = torch.cat([aug_init, batch['rgb_future']], dim=1)
+
+                aug_future = batch['rgb_future'].clone()
+                if aug_future.shape[1] >= 2:
+                    aug_prev = aug_future[:, -2:-1].float() / 255.0
+                    aug_prev = aug_prev.view(-1, c1, h1, w1)
+                    aug_prev = self.color_jitter(aug_prev)
+                    aug_prev += torch.randn_like(aug_prev) * self.gaussian_std
+                    aug_prev = aug_prev.clamp(0, 1)
+                    aug_prev = (aug_prev * 255.0).clamp(0, 255).to(torch.uint8)
+                    aug_prev = aug_prev.view(b, 1, c1, h1, w1)
+                    aug_future[:, -2:-1] = aug_prev
+
+            rgb_seq_aug = torch.cat([aug_init, aug_future], dim=1)
             rgb_seq_aug = self.rgb_preprocessor(rgb_seq_aug, train=train)
-            aug_rgb_initial = rgb_seq_aug[:,:1]
+            aug_rgb_initial = rgb_seq_aug[:, :1]
         else:
             rgb_initial = self.rgb_preprocessor(batch['rgb_initial'], train=train)
             with torch.no_grad():
@@ -450,8 +465,8 @@ class MotoGPT_Trainer:
             return emb
 
         if (pred['latent_motion_preds'] is not None) and (pred_aug['latent_motion_preds'] is not None):
-            z1 = _get_latent_embedding(pred['latent_motion_preds'])
-            z2 = _get_latent_embedding(pred_aug['latent_motion_preds'])
+            z1 = _get_latent_embedding(pred['latent_motion_preds'][:, -1:])
+            z2 = _get_latent_embedding(pred_aug['latent_motion_preds'][:, -1:])
             temperature = 0.1
             logits_mat = torch.matmul(z1, z2.T) / temperature
             labels = torch.arange(z1.shape[0], device=device)
