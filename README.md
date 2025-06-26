@@ -209,7 +209,7 @@ cd ${PROJECT_ROOT}/scripts/
 nohup bash pretrain_moto_gpt_on_calvin.sh > pretrain_moto_gpt_on_calvin.log 2>&1 &
 tail -f pretrain_moto_gpt_on_calvin.log
 ```
-- The trainer now jitters brightness and contrast of the first frame and applies a symmetric InfoNCE loss between latent motion predictions from the original and augmented inputs.
+- The trainer jitters brightness and contrast of the first frame and also augments the preceding frame with brightness, contrast and gaussian noise. Only the latent motion prediction from this temporal pair is used in a symmetric InfoNCE loss.
 
 #### Pre-training on Open X-Embodiment datasets
 - Modify the `video_dir` and `lmdb_dir` fields in [moto_gpt/configs/data/rtx.yaml](moto_gpt/configs/data/rtx.yaml)
