@@ -16,6 +16,7 @@ from functools import partial
 from transformers import AutoTokenizer
 from transformers.utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo
 import numpy as np
+from collections import defaultdict
 from common.models.model_utils import load_model
 
 def get_image_processor(vision_processor_config):
@@ -93,15 +94,15 @@ def visualization(
         video_writer.release()
 
 def inference(
-        moto_gpt, 
-        latent_motion_tokenizer, 
-        lang_tokenizer, 
-        image_processor, 
+        moto_gpt,
+        latent_motion_tokenizer,
+        lang_tokenizer,
+        image_processor,
         image_seq_post_processor,
         num_gen_frames,
         delta_t,
         moto_gpt_seq_len,
-        input_dir, 
+        input_dir,
         output_dir
     ):
 
@@ -110,6 +111,11 @@ def inference(
 
     with open(os.path.join(input_dir, "lang_annotations.json")) as f:
         lang_annotations = json.load(f)
+
+    metrics = {
+        "task_to_rmses": defaultdict(list),
+        "task_to_preds": defaultdict(list)
+    }
 
     video_dir = os.path.join(input_dir, "videos")
     for video_path in tqdm(glob(os.path.join(video_dir, "*.mp4"))):
@@ -151,9 +157,9 @@ def inference(
 
         decoding_mode2latent_motion_decoding_kwargs = {
             "sampleFalse_beam1": {
-                "temperature": 1.0, 
-                "sample": False, 
-                "top_k": 0, 
+                "temperature": 1.0,
+                "sample": False,
+                "top_k": 0,
                 "top_p": 1.0,
                 "beam_size": 1, 
                 "parallel": False
@@ -232,6 +238,21 @@ def inference(
                 "latent_motion_id_preds": latent_motion_id_preds.detach().cpu()
             }
 
+            if decoding_mode == "sampleFalse_beam1":
+                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(gt_latent_motion_ids)
+                gt_vec = gt_vec.mean(dim=1)
+                pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
+                    latent_motion_id_preds.to(device)
+                )
+                pred_vec = pred_vec.mean(dim=1)
+                rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean()).item()
+                print(f"Task: {lang_goal}")
+                print("Ground truth vector:\n", gt_vec)
+                print("Predicted vector:\n", pred_vec)
+                print("RMSE:", rmse)
+                metrics["task_to_rmses"][lang_goal].append(rmse)
+                metrics["task_to_preds"][lang_goal].append(pred_vec.mean(dim=0).cpu())
+
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
@@ -240,6 +261,8 @@ def inference(
             image_seq_post_processor=image_seq_post_processor,
             path=os.path.join(output_dir, basename)
         )
+
+    return metrics
 
 
 
@@ -269,18 +292,29 @@ def main(args):
 
 
     # Run inference
-    inference(
-        moto_gpt=moto_gpt, 
-        latent_motion_tokenizer=latent_motion_tokenizer, 
-        lang_tokenizer=lang_tokenizer, 
-        image_processor=image_processor, 
+    metrics = inference(
+        moto_gpt=moto_gpt,
+        latent_motion_tokenizer=latent_motion_tokenizer,
+        lang_tokenizer=lang_tokenizer,
+        image_processor=image_processor,
         image_seq_post_processor=image_seq_post_processor,
         num_gen_frames=args.num_gen_frames,
         delta_t=args.delta_t,
         moto_gpt_seq_len=moto_gpt_config['sequence_length'],
-        input_dir=args.input_dir, 
+        input_dir=args.input_dir,
         output_dir=args.output_dir
     )
+
+    for task, rmses in metrics["task_to_rmses"].items():
+        print(f"Average RMSE for {task}: {np.mean(rmses):.6f}")
+
+    task_names = list(metrics["task_to_preds"].keys())
+    for i in range(len(task_names)):
+        for j in range(i + 1, len(task_names)):
+            vec_i = torch.stack(metrics["task_to_preds"][task_names[i]]).mean(dim=0)
+            vec_j = torch.stack(metrics["task_to_preds"][task_names[j]]).mean(dim=0)
+            cos = torch.nn.functional.cosine_similarity(vec_i, vec_j, dim=0).item()
+            print(f"Cosine similarity between {task_names[i]} and {task_names[j]}: {cos:.6f}")
 
 
 if __name__ == '__main__':
@@ -295,4 +329,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
     main(args)
 
-    
