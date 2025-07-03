@@ -239,9 +239,11 @@ def inference(
             }
 
             if decoding_mode == "sampleFalse_beam1":
-                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(gt_latent_motion_ids)
+                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(gt_latent_motion_ids.long().to(device))
                 gt_vec = gt_vec.mean(dim=1)
-                pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(latent_motion_id_preds)
+                pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
+                    latent_motion_id_preds.long().to(device)
+                )
                 pred_vec = pred_vec.mean(dim=1)
                 rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean()).item()
                 print(f"Task: {lang_goal}")
