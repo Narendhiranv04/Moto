@@ -22,7 +22,8 @@ OUTPUT_DIR="${PROJECT_ROOT}/moto_gpt/evaluation/motion_prior_analysis/output_mot
 LatentMotionGen
 
 # CALVIN
-MOTO_GPT_PATH="${PROJECT_ROOT}/moto_gpt/checkpoints/moto_gpt_pretrained_on_calvin"
+# use Moto-GPT weights trained with contrastive latent motion embeddings
+MOTO_GPT_PATH="${PROJECT_ROOT}/moto_gpt/outputs/moto_gpt_pretrained_on_calvin/data_calvin-model_actPredFalse_motionPredTrue_visionMaeLarge_seq2_chunk5_maskProb0.5-train_lr0.0001_bs512-aug_shiftTrue_resizedCropFalse/saved_epoch_1_step_38613"
 LATENT_MOTION_TOKENIZER_PATH="${PROJECT_ROOT}/latent_motion_tokenizer/checkpoints/latent_motion_tokenizer_trained_on_calvin"
 NUM_GEN_FRAMES=8
 DELTA_T=5
