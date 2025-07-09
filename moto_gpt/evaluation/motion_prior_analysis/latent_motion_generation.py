@@ -18,6 +18,9 @@ from transformers.utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo
 import numpy as np
 from collections import defaultdict
 from common.models.model_utils import load_model
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 def get_image_processor(vision_processor_config):
     input_size = (vision_processor_config['size'], vision_processor_config['size'])
@@ -93,13 +96,44 @@ def visualization(
             video_writer.write(image_cv)
         video_writer.release()
 
+def tsne_video(vectors, path, fps=4):
+    """Save a t-SNE trajectory video for the given vectors."""
+    n_samples = len(vectors)
+    if n_samples < 2:
+        print("TSNE skipped: not enough samples")
+        return
+    perplexity = min(30, n_samples - 1)
+    try:
+        tsne = TSNE(n_components=2, random_state=0, perplexity=perplexity)
+        coords = tsne.fit_transform(vectors)
+    except Exception as e:
+        print(f"TSNE failed: {e}")
+        return
+
+    w, h = 400, 400
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+    for i in range(len(coords)):
+        plt.figure(figsize=(4,4))
+        plt.scatter(coords[:i+1,0], coords[:i+1,1], c=np.arange(i+1), cmap='viridis')
+        plt.plot(coords[:i+1,0], coords[:i+1,1], c='gray')
+        plt.axis('off')
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        plt.close()
+        buf.seek(0)
+        image = Image.open(buf)
+        image = image.resize((w, h))
+        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
         lang_tokenizer,
         image_processor,
         image_seq_post_processor,
-        num_gen_frames,
         delta_t,
         moto_gpt_seq_len,
         input_dir,
@@ -112,10 +146,8 @@ def inference(
     with open(os.path.join(input_dir, "lang_annotations.json")) as f:
         lang_annotations = json.load(f)
 
-    metrics = {
-        "task_to_rmses": defaultdict(list),
-        "task_to_preds": defaultdict(list)
-    }
+    # use defaultdicts so new tasks are automatically initialized
+    metrics = defaultdict(lambda: defaultdict(list))
 
     video_dir = os.path.join(input_dir, "videos")
     for video_path in tqdm(glob(os.path.join(video_dir, "*.mp4"))):
@@ -123,7 +155,7 @@ def inference(
         video = cv2.VideoCapture(video_path)
         video_len = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         frames = []
-        for i in range(0, min(video_len, num_gen_frames*delta_t+1), delta_t):
+        for i in range(0, video_len, delta_t):
             video.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = video.read()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -195,7 +227,7 @@ def inference(
         latent_mask = attention_mask
 
         for decoding_mode, latent_motion_decoding_kwargs in decoding_mode2latent_motion_decoding_kwargs.items():
-            gen_iter_num = math.ceil(num_gen_frames / moto_gpt_seq_len)
+            gen_iter_num = math.ceil(exact_num_gen_frames / moto_gpt_seq_len)
 
             frame_preds = []
             latent_motion_id_preds = []
@@ -245,18 +277,17 @@ def inference(
                     latent_motion_id_preds.long().to(device)
                 )
                 pred_vec = pred_vec.mean(dim=1)
-                rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean()).item()
+                rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean(dim=1))
                 print(f"Task: {lang_goal}")
-                print("Ground truth vector:\n", gt_vec)
-                print("Predicted vector:\n", pred_vec)
-                print("RMSE:", rmse)
-                metrics["task_to_rmses"][lang_goal].append(rmse)
-                metrics["task_to_preds"][lang_goal].append(pred_vec.mean(dim=0).cpu())
+                print("RMSE per step:", rmse)
+                metrics["task_to_rmses"][lang_goal].append(rmse.cpu())
+                metrics["task_to_preds"][lang_goal].append(pred_vec.detach().cpu())
+                tsne_video(pred_vec.detach().cpu().numpy(), os.path.join(output_dir, f"{os.path.splitext(video_basename)[0]}_tsne.mp4"))
 
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
-            orig_video=frames.detach().cpu(), 
+            orig_video=frames.detach().cpu(),
             decoding_mode2preds=decoding_mode2preds,
             image_seq_post_processor=image_seq_post_processor,
             path=os.path.join(output_dir, basename)
@@ -298,7 +329,6 @@ def main(args):
         lang_tokenizer=lang_tokenizer,
         image_processor=image_processor,
         image_seq_post_processor=image_seq_post_processor,
-        num_gen_frames=args.num_gen_frames,
         delta_t=args.delta_t,
         moto_gpt_seq_len=moto_gpt_config['sequence_length'],
         input_dir=args.input_dir,
@@ -306,22 +336,16 @@ def main(args):
     )
 
     for task, rmses in metrics["task_to_rmses"].items():
-        print(f"Average RMSE for {task}: {np.mean(rmses):.6f}")
-
-    task_names = list(metrics["task_to_preds"].keys())
-    for i in range(len(task_names)):
-        for j in range(i + 1, len(task_names)):
-            vec_i = torch.stack(metrics["task_to_preds"][task_names[i]]).mean(dim=0)
-            vec_j = torch.stack(metrics["task_to_preds"][task_names[j]]).mean(dim=0)
-            cos = torch.nn.functional.cosine_similarity(vec_i, vec_j, dim=0).item()
-            print(f"Cosine similarity between {task_names[i]} and {task_names[j]}: {cos:.6f}")
+        rmse_tensor = torch.cat(rmses)
+        print(f"RMSE per step for {task}:", rmse_tensor)
+        avg_rmse = rmse_tensor.mean().item()
+        print(f"Average RMSE for {task}: {avg_rmse:.6f}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--moto_gpt_path', type=str, required=True)
     parser.add_argument('--latent_motion_tokenizer_path', type=str, required=True)
-    parser.add_argument('--num_gen_frames', type=int, default=4)
     parser.add_argument('--delta_t', type=int, required=True)
     parser.add_argument('--input_dir', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
