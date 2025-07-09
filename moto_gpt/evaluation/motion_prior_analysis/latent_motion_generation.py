@@ -130,7 +130,6 @@ def inference(
         lang_tokenizer,
         image_processor,
         image_seq_post_processor,
-        num_gen_frames,
         delta_t,
         moto_gpt_seq_len,
         input_dir,
@@ -144,8 +143,7 @@ def inference(
         lang_annotations = json.load(f)
 
     metrics = {
-        "task_to_rmses": defaultdict(list),
-        "task_to_preds": defaultdict(list)
+        "task_to_rmses": defaultdict(list)
     }
 
     video_dir = os.path.join(input_dir, "videos")
@@ -328,7 +326,6 @@ def main(args):
         lang_tokenizer=lang_tokenizer,
         image_processor=image_processor,
         image_seq_post_processor=image_seq_post_processor,
-        num_gen_frames=args.num_gen_frames,
         delta_t=args.delta_t,
         moto_gpt_seq_len=moto_gpt_config['sequence_length'],
         input_dir=args.input_dir,
@@ -336,7 +333,7 @@ def main(args):
     )
 
     for task, rmses in metrics["task_to_rmses"].items():
-        rmse_tensor = torch.stack(rmses)
+        rmse_tensor = torch.cat(rmses)
         print(f"RMSE per step for {task}:", rmse_tensor)
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
@@ -346,7 +343,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--moto_gpt_path', type=str, required=True)
     parser.add_argument('--latent_motion_tokenizer_path', type=str, required=True)
-    parser.add_argument('--num_gen_frames', type=int, default=4)
     parser.add_argument('--delta_t', type=int, required=True)
     parser.add_argument('--input_dir', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
