@@ -182,6 +182,7 @@ def principal_component_ribbon(vectors, path, delta_t):
     plt.savefig(path)
     plt.close()
 
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -342,7 +343,6 @@ def inference(
                 latent_speed_curve(vec_np, os.path.join(output_dir, f"{base}_speed.png"), delta_t)
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
-
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
