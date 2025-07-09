@@ -277,8 +277,8 @@ def inference(
                 print(f"Task: {lang_goal}")
                 print("RMSE per step:", rmse)
                 metrics["task_to_rmses"][lang_goal].append(rmse.cpu())
-                metrics["task_to_preds"][lang_goal].append(pred_vec.cpu())
-                tsne_video(pred_vec.cpu().numpy(), os.path.join(output_dir, f"{os.path.splitext(video_basename)[0]}_tsne.mp4"))
+                metrics["task_to_preds"][lang_goal].append(pred_vec.detach().cpu())
+                tsne_video(pred_vec.detach().cpu().numpy(), os.path.join(output_dir, f"{os.path.splitext(video_basename)[0]}_tsne.mp4"))
 
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
