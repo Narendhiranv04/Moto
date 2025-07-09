@@ -19,6 +19,7 @@ import numpy as np
 from collections import defaultdict
 from common.models.model_utils import load_model
 from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from io import BytesIO
 
@@ -127,6 +128,60 @@ def tsne_video(vectors, path, fps=4):
         frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         video_writer.write(frame)
     video_writer.release()
+
+
+def latent_speed_curve(vectors, path, delta_t):
+    """Plot Euclidean distance between consecutive vectors."""
+    if len(vectors) < 2:
+        print("Speed curve skipped: not enough samples")
+        return
+    speeds = np.linalg.norm(np.diff(vectors, axis=0), axis=1)
+    x = np.arange(1, len(vectors)) * delta_t
+    plt.figure()
+    plt.plot(x, speeds, marker='o')
+    plt.xlabel('Frame index')
+    plt.ylabel('Latent speed')
+    plt.title('Latent-speed curve')
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
+def feature_heatmap(vectors, path):
+    """Save heatmap of latent dimensions over time."""
+    if len(vectors) == 0:
+        print("Heatmap skipped: no vectors")
+        return
+    plt.figure(figsize=(6, 4))
+    plt.imshow(np.array(vectors).T, aspect='auto', cmap='viridis')
+    plt.xlabel('Frame index')
+    plt.ylabel('Latent dim')
+    plt.title('Feature heat-map')
+    plt.colorbar()
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
+def principal_component_ribbon(vectors, path, delta_t):
+    """Plot PC1 over time colored by PC2."""
+    if len(vectors) == 0:
+        print("PCA ribbon skipped: no vectors")
+        return
+    pca = PCA(n_components=2)
+    coords = pca.fit_transform(vectors)
+    x = np.arange(len(vectors)) * delta_t
+    plt.figure()
+    sc = plt.scatter(x, coords[:, 0], c=coords[:, 1], cmap='viridis')
+    plt.plot(x, coords[:, 0], color='gray', alpha=0.5)
+    plt.xlabel('Frame index')
+    plt.ylabel('PC1')
+    plt.title('Principal-component ribbon')
+    plt.colorbar(sc, label='PC2')
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
 
 def inference(
         moto_gpt,
@@ -282,8 +337,12 @@ def inference(
                 print("RMSE per step:", rmse)
                 metrics["task_to_rmses"][lang_goal].append(rmse.cpu())
                 metrics["task_to_preds"][lang_goal].append(pred_vec.detach().cpu())
-                tsne_video(pred_vec.detach().cpu().numpy(), os.path.join(output_dir, f"{os.path.splitext(video_basename)[0]}_tsne.mp4"))
-
+                vec_np = pred_vec.detach().cpu().numpy()
+                base = os.path.splitext(video_basename)[0]
+                tsne_video(vec_np, os.path.join(output_dir, f"{base}_tsne.mp4"))
+                latent_speed_curve(vec_np, os.path.join(output_dir, f"{base}_speed.png"), delta_t)
+                feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
+                principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
