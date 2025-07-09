@@ -142,10 +142,8 @@ def inference(
     with open(os.path.join(input_dir, "lang_annotations.json")) as f:
         lang_annotations = json.load(f)
 
-    metrics = {
-        "task_to_rmses": defaultdict(list),
-        "task_to_preds": defaultdict(list)
-    }
+    # use defaultdicts so new tasks are automatically initialized
+    metrics = defaultdict(lambda: defaultdict(list))
 
     video_dir = os.path.join(input_dir, "videos")
     for video_path in tqdm(glob(os.path.join(video_dir, "*.mp4"))):
