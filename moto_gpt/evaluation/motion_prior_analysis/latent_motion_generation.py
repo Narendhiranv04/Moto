@@ -97,10 +97,14 @@ def visualization(
         video_writer.release()
 
 def tsne_video(vectors, path, fps=4):
-    if len(vectors) == 0:
+    """Save a t-SNE trajectory video for the given vectors."""
+    n_samples = len(vectors)
+    if n_samples < 2:
+        print("TSNE skipped: not enough samples")
         return
+    perplexity = min(30, n_samples - 1)
     try:
-        tsne = TSNE(n_components=2, random_state=0)
+        tsne = TSNE(n_components=2, random_state=0, perplexity=perplexity)
         coords = tsne.fit_transform(vectors)
     except Exception as e:
         print(f"TSNE failed: {e}")
