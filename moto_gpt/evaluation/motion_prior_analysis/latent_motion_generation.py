@@ -360,7 +360,7 @@ def _visualize_subtrajectory_match(query_vec, reference_vecs, ref_idx, save_path
 
 
 def subtrajectory_dtw_analysis(task_to_vecs, save_dir):
-    """Find best DTW match for each timestep and visualize."""
+    """Find best DTW match for each timestep across different tasks and visualize."""
     os.makedirs(save_dir, exist_ok=True)
     tasks = list(task_to_vecs.keys())
     for task_a in tasks:
@@ -371,6 +371,8 @@ def subtrajectory_dtw_analysis(task_to_vecs, save_dir):
                 best_sim = -np.inf
                 best_info = None
                 for task_b in tasks:
+                    if task_b == task_a:
+                        continue
                     for epi_j, seq_b in enumerate(task_to_vecs[task_b]):
                         arr_b = seq_b.detach().cpu().numpy()
                         _, start, _, path = _subsequence_dtw(query, arr_b)
