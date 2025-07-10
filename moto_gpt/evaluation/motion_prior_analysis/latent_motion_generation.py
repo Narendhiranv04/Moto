@@ -381,6 +381,55 @@ def _visualize_snippet_match(query_seq, q_start, ref_seq, r_start, save_path):
     plt.close()
 
 
+def _snippet_match_video(query_seq, q_start, ref_seq, r_start, save_path):
+    """Save an MP4 animation showing the snippet match over time."""
+    snippet_len = 3
+    vectors = np.concatenate([query_seq, ref_seq], axis=0)
+    if vectors.shape[0] < 2:
+        return
+
+    coords = PCA(n_components=2).fit_transform(vectors)
+    q_full = coords[: len(query_seq)]
+    r_full = coords[len(query_seq) :]
+
+    q_coords = q_full[q_start : q_start + snippet_len]
+    r_coords = r_full[r_start : r_start + snippet_len]
+
+    w, h = 400, 400
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(save_path, fourcc, 1, (w, h))
+    for t in range(snippet_len):
+        plt.figure(figsize=(4, 4))
+        plt.plot(q_full[:, 0], q_full[:, 1], linestyle=":", color="red", alpha=0.5)
+        plt.plot(r_full[:, 0], r_full[:, 1], linestyle=":", color="blue", alpha=0.5)
+        plt.plot(q_coords[: t + 1, 0], q_coords[: t + 1, 1], "-o", color="red")
+        plt.plot(r_coords[: t + 1, 0], r_coords[: t + 1, 1], "-o", color="blue")
+        plt.annotate(
+            "",
+            xy=q_coords[t],
+            xytext=q_coords[0],
+            arrowprops=dict(arrowstyle="->", color="red", lw=2),
+        )
+        plt.annotate(
+            "",
+            xy=r_coords[t],
+            xytext=r_coords[0],
+            arrowprops=dict(arrowstyle="->", color="blue", lw=2),
+        )
+        plt.xlabel("PC1")
+        plt.ylabel("PC2")
+        plt.tight_layout()
+        buf = BytesIO()
+        plt.savefig(buf, format="png")
+        plt.close()
+        buf.seek(0)
+        image = Image.open(buf).convert("RGB").resize((w, h))
+        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+
 def _embed_snippet(snippet):
     """Embed a 3-frame snippet with mean and delta features."""
     snippet = np.asarray(snippet)
@@ -446,7 +495,6 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 snippets.append(snippet)
                 full_seqs.append(arr)
 
-
     if not embeddings:
         return
 
@@ -486,11 +534,13 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             )
             print(msg)
             log_f.write(msg + "\n")
-
-            img_path = os.path.join(
+            match_dir = os.path.join(
                 save_dir,
-                f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
+                f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}"
             )
+            os.makedirs(match_dir, exist_ok=True)
+            img_path = os.path.join(match_dir, "match.png")
+            video_path = os.path.join(match_dir, "match.mp4")
             _visualize_snippet_match(
                 full_seqs[i],
                 step,
@@ -498,9 +548,15 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 b_step,
                 img_path,
             )
+            _snippet_match_video(
+                full_seqs[i],
+                step,
+                full_seqs[best_j],
+                b_step,
+                video_path,
+            )
 
     log_f.close()
-
 
 def inference(
         moto_gpt,
