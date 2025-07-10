@@ -337,6 +337,112 @@ def aligned_cosine_similarities(task_to_vecs):
             if sims:
                 print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
 
+
+def _visualize_snippet_match(query_snippet, ref_snippet, save_path):
+    """Visualize matched motion snippets using PCA arrows."""
+    vectors = np.concatenate([query_snippet, ref_snippet], axis=0)
+    if vectors.shape[0] < 2:
+        return
+    coords = PCA(n_components=2).fit_transform(vectors)
+    q_coords = coords[: len(query_snippet)]
+    r_coords = coords[len(query_snippet) :]
+
+    plt.figure()
+    plt.plot(q_coords[:, 0], q_coords[:, 1], '-o', color='red', label='query')
+    plt.plot(r_coords[:, 0], r_coords[:, 1], '-o', color='blue', label='reference')
+    plt.annotate('', xy=q_coords[-1], xytext=q_coords[0],
+                 arrowprops=dict(arrowstyle='->', color='red', lw=2))
+    plt.annotate('', xy=r_coords[-1], xytext=r_coords[0],
+                 arrowprops=dict(arrowstyle='->', color='blue', lw=2))
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
+def _embed_snippet(snippet):
+    """Embed a 3-frame snippet with mean and delta features."""
+    snippet = np.asarray(snippet)
+    mean_feat = snippet.mean(axis=0)
+    delta_feat = snippet[-1] - snippet[0]
+    return np.concatenate([mean_feat, delta_feat], axis=0)
+
+
+def _build_faiss_index(embeddings):
+    import faiss
+
+    embeddings = embeddings.astype('float32')
+    faiss.normalize_L2(embeddings)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+    return index
+
+
+def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, top_k=5):
+    """Compare motion snippets across tasks using FAISS and Soft-DTW."""
+    os.makedirs(save_dir, exist_ok=True)
+
+    embeddings = []
+    meta = []
+    snippets = []
+    tasks = list(task_to_vecs.keys())
+
+    for task in tasks:
+        for epi_idx, seq in enumerate(task_to_vecs[task]):
+            arr = seq.detach().cpu().numpy()
+            for t_idx in range(len(arr) - 2):
+                snippet = arr[t_idx : t_idx + 3]
+                emb = _embed_snippet(snippet)
+                if np.linalg.norm(emb[arr.shape[1] :]) < delta_threshold:
+                    continue
+                embeddings.append(emb)
+                meta.append((task, epi_idx, t_idx))
+                snippets.append(snippet)
+
+    if not embeddings:
+        return
+
+    embeddings = np.stack(embeddings).astype("float32")
+    index = _build_faiss_index(embeddings.copy())
+
+    try:
+        import faiss
+        faiss.write_index(index, os.path.join(save_dir, "subaction.index"))
+    except Exception:
+        pass
+    with open(os.path.join(save_dir, "subaction_meta.json"), "w") as f:
+        json.dump([
+            {"task": t, "episode": int(e), "step": int(s)} for t, e, s in meta
+        ], f)
+
+    for i, (task, epi, step) in enumerate(meta):
+        D, I = index.search(embeddings[i : i + 1], top_k + 1)
+        best_j = None
+        best_sim = -np.inf
+        for j in I[0]:
+            if j == i:
+                continue
+            b_task, b_epi, b_step = meta[j]
+            if b_task == task:
+                continue
+            _, _, _, path = _subsequence_dtw(snippets[i], snippets[j])
+            sim = _path_cosine_similarity(snippets[i], snippets[j], path)
+            if sim > best_sim:
+                best_sim = sim
+                best_j = j
+        if best_j is not None:
+            b_task, b_epi, b_step = meta[best_j]
+            print(
+                f"Snippet {task} ep{epi} step{step} -> {b_task} ep{b_epi} step{b_step} similarity: {best_sim:.4f}"
+            )
+            img_path = os.path.join(
+                save_dir,
+                f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
+            )
+            _visualize_snippet_match(snippets[i], snippets[best_j], img_path)
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -558,6 +664,10 @@ def main(args):
 
     tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
     aligned_cosine_similarities(metrics["task_to_preds"])
+    subtrajectory_faiss_analysis(
+        metrics["task_to_preds"],
+        os.path.join(args.output_dir, "subtrajectory_matches"),
+    )
 
 
 
