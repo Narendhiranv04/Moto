@@ -371,18 +371,42 @@ def _embed_snippet(snippet):
 
 
 def _build_faiss_index(embeddings):
-    import faiss
+    """Build a FAISS index if possible, otherwise fall back to brute force."""
+    try:
+        import faiss  # type: ignore
 
-    embeddings = embeddings.astype('float32')
-    faiss.normalize_L2(embeddings)
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
-    return index
+        embeddings = embeddings.astype("float32")
+        faiss.normalize_L2(embeddings)
+        index = faiss.IndexFlatIP(embeddings.shape[1])
+        index.add(embeddings)
+        return index
+    except Exception as e:  # pragma: no cover - faiss may not be installed
+        print(f"FAISS unavailable ({e}); falling back to brute force index")
+
+        embeddings = embeddings.astype("float32")
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1e-6
+        normalized = embeddings / norms
+
+        class BruteForceIndex:
+            def __init__(self, embs):
+                self.embs = embs
+
+            def search(self, q, k):
+                q_norm = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-6)
+                sims = np.dot(self.embs, q_norm.T).T
+                idx = np.argsort(-sims, axis=1)[:, :k]
+                dist = np.take_along_axis(sims, idx, axis=1)
+                return dist.astype("float32"), idx.astype("int64")
+
+        return BruteForceIndex(normalized)
 
 
 def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, top_k=5):
     """Compare motion snippets across tasks using FAISS and Soft-DTW."""
     os.makedirs(save_dir, exist_ok=True)
+    log_path = os.path.join(save_dir, "matches.log")
+    log_f = open(log_path, "w")
 
     embeddings = []
     meta = []
@@ -434,15 +458,20 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 best_j = j
         if best_j is not None:
             b_task, b_epi, b_step = meta[best_j]
-            print(
-                f"Snippet {task} ep{epi} step{step} -> {b_task} ep{b_epi} step{b_step} similarity: {best_sim:.4f}"
+            msg = (
+                f"Snippet {task} ep{epi} frames {step}-{step+2} -> "
+                f"{b_task} ep{b_epi} frames {b_step}-{b_step+2} similarity: {best_sim:.4f}"
             )
+            print(msg)
             img_path = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
             )
             _visualize_snippet_match(snippets[i], snippets[best_j], img_path)
 
+    log_f.close()
+    
+    
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -662,13 +691,14 @@ def main(args):
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
 
-    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
-    aligned_cosine_similarities(metrics["task_to_preds"])
+    tsne_cluster_plot(
+        metrics["task_to_preds"],
+        os.path.join(args.output_dir, "tsne_cluster_plots"),
+    )
     subtrajectory_faiss_analysis(
         metrics["task_to_preds"],
         os.path.join(args.output_dir, "subtrajectory_matches"),
     )
-
 
 
 
