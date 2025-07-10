@@ -407,7 +407,7 @@ def _snippet_match_video(query_frames, q_start, ref_frames, r_start, save_path, 
         video_writer.write(frame)
     video_writer.release()
 
-
+   
 def _embed_snippet(snippet):
     """Embed a 3-frame snippet with mean and delta features."""
     snippet = np.asarray(snippet)
@@ -480,7 +480,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, task_to_frames, save_dir, post_pr
                 snippets.append(snippet)
                 full_seqs.append(arr)
                 full_frames.append(frames_arr)
-
+                
     if not embeddings:
         return
 
