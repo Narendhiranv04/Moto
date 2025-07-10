@@ -35,5 +35,4 @@ export PROJECT_ROOT=[your path to Moto project]
 # ps aux | grep 'latent_motion_generation' | awk '{print $2}' | xargs kill -9
 cd ${PROJECT_ROOT}/scripts
 nohup bash run_latent_motion_generation.sh > run_latent_motion_generation.log 2>&1 &
-tail -f run_latent_motion_generation.log
-COMMENT
+tail -f run_latent_motion_generation.logCOMMENT
