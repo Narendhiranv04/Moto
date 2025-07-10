@@ -376,7 +376,7 @@ def inference(
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
                 tsne_trajectory_plot(pred_vec.detach().cpu(), base, os.path.join(output_dir, f"{base}_tsne_traj.png"))
-
+                
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
