@@ -247,6 +247,7 @@ def tsne_cluster_plot(task_to_vecs, save_path):
     plt.savefig(save_path)
     plt.close()
 
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -467,6 +468,7 @@ def main(args):
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
 
     tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_clusters.png"))
+
 
 
 if __name__ == '__main__':
