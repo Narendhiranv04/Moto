@@ -560,6 +560,7 @@ def main(args):
     aligned_cosine_similarities(metrics["task_to_preds"])
 
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--moto_gpt_path', type=str, required=True)
