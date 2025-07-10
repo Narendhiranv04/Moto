@@ -337,6 +337,59 @@ def aligned_cosine_similarities(task_to_vecs):
             if sims:
                 print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
 
+
+def _visualize_subtrajectory_match(query_vec, reference_vecs, ref_idx, save_path):
+    """Visualize a subtrajectory match using PCA."""
+    vectors = np.concatenate([query_vec, reference_vecs], axis=0)
+    if vectors.shape[0] < 2:
+        return
+    coords = PCA(n_components=2).fit_transform(vectors)
+    q = coords[0]
+    r = coords[1:]
+    plt.figure()
+    plt.plot(r[:, 0], r[:, 1], '-o', label='reference', alpha=0.7)
+    plt.scatter(q[0], q[1], color='red', marker='*', s=100, label='query')
+    plt.annotate('', xy=r[ref_idx], xytext=q,
+                 arrowprops=dict(arrowstyle='->', color='red', lw=2))
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
+def subtrajectory_dtw_analysis(task_to_vecs, save_dir):
+    """Find best DTW match for each timestep and visualize."""
+    os.makedirs(save_dir, exist_ok=True)
+    tasks = list(task_to_vecs.keys())
+    for task_a in tasks:
+        for epi_idx, seq_a in enumerate(task_to_vecs[task_a]):
+            arr_a = seq_a.detach().cpu().numpy()
+            for t_idx in range(arr_a.shape[0]):
+                query = arr_a[t_idx:t_idx+1]
+                best_sim = -np.inf
+                best_info = None
+                for task_b in tasks:
+                    for epi_j, seq_b in enumerate(task_to_vecs[task_b]):
+                        arr_b = seq_b.detach().cpu().numpy()
+                        _, start, _, path = _subsequence_dtw(query, arr_b)
+                        sim = _path_cosine_similarity(query, arr_b, path)
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_info = (task_b, epi_j, start, arr_b)
+                if best_info is not None:
+                    b_task, b_epi, b_step, b_vecs = best_info
+                    print(
+                        f"Best match for {task_a} episode {epi_idx} step {t_idx} -> "
+                        f"{b_task} episode {b_epi} step {b_step} similarity: {best_sim:.4f}"
+                    )
+                    img_path = os.path.join(
+                        save_dir,
+                        f"{task_a}_ep{epi_idx}_step{t_idx}_to_{b_task}_ep{b_epi}_step{b_step}.png"
+                    )
+                    _visualize_subtrajectory_match(query, b_vecs, b_step, img_path)
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -558,6 +611,7 @@ def main(args):
 
     tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
     aligned_cosine_similarities(metrics["task_to_preds"])
+    subtrajectory_dtw_analysis(metrics["task_to_preds"], os.path.join(args.output_dir, "subtrajectory_matches"))
 
 
 
