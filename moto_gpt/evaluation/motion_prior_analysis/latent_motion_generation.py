@@ -429,6 +429,7 @@ def _snippet_match_video(query_seq, q_start, ref_seq, r_start, save_path):
     video_writer.release()
 
 
+
 def _embed_snippet(snippet):
     """Embed a 3-frame snippet with mean and delta features."""
     snippet = np.asarray(snippet)
@@ -533,7 +534,6 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             )
             print(msg)
             log_f.write(msg + "\n")
-
             match_dir = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}"
