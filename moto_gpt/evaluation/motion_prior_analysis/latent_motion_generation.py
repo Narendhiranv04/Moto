@@ -338,22 +338,41 @@ def aligned_cosine_similarities(task_to_vecs):
                 print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
 
 
-def _visualize_snippet_match(query_snippet, ref_snippet, save_path):
-    """Visualize matched motion snippets using PCA arrows."""
-    vectors = np.concatenate([query_snippet, ref_snippet], axis=0)
+def _visualize_snippet_match(query_seq, q_start, ref_seq, r_start, save_path):
+    """Visualize two matched snippets within their full trajectories."""
+    snippet_len = 3
+    vectors = np.concatenate([query_seq, ref_seq], axis=0)
     if vectors.shape[0] < 2:
         return
+
     coords = PCA(n_components=2).fit_transform(vectors)
-    q_coords = coords[: len(query_snippet)]
-    r_coords = coords[len(query_snippet) :]
+    q_full = coords[: len(query_seq)]
+    r_full = coords[len(query_seq) :]
+
+    q_coords = q_full[q_start : q_start + snippet_len]
+    r_coords = r_full[r_start : r_start + snippet_len]
 
     plt.figure()
-    plt.plot(q_coords[:, 0], q_coords[:, 1], '-o', color='red', label='query')
-    plt.plot(r_coords[:, 0], r_coords[:, 1], '-o', color='blue', label='reference')
-    plt.annotate('', xy=q_coords[-1], xytext=q_coords[0],
-                 arrowprops=dict(arrowstyle='->', color='red', lw=2))
-    plt.annotate('', xy=r_coords[-1], xytext=r_coords[0],
-                 arrowprops=dict(arrowstyle='->', color='blue', lw=2))
+    plt.plot(
+        q_full[:, 0],
+        q_full[:, 1],
+        linestyle=':',
+        color='red',
+        alpha=0.5,
+        label='query full',
+    )
+    plt.plot(
+        r_full[:, 0],
+        r_full[:, 1],
+        linestyle=':',
+        color='blue',
+        alpha=0.5,
+        label='reference full',
+    )
+    plt.plot(q_coords[:, 0], q_coords[:, 1], '-o', color='red', label='query snippet')
+    plt.plot(r_coords[:, 0], r_coords[:, 1], '-o', color='blue', label='reference snippet')
+    plt.annotate('', xy=q_coords[-1], xytext=q_coords[0], arrowprops=dict(arrowstyle='->', color='red', lw=2))
+    plt.annotate('', xy=r_coords[-1], xytext=r_coords[0], arrowprops=dict(arrowstyle='->', color='blue', lw=2))
     plt.xlabel('PC1')
     plt.ylabel('PC2')
     plt.legend()
@@ -411,6 +430,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
     embeddings = []
     meta = []
     snippets = []
+    full_seqs = []
     tasks = list(task_to_vecs.keys())
 
     for task in tasks:
@@ -424,6 +444,8 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 embeddings.append(emb)
                 meta.append((task, epi_idx, t_idx))
                 snippets.append(snippet)
+                full_seqs.append(arr)
+
 
     if not embeddings:
         return
@@ -463,15 +485,23 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 f"{b_task} ep{b_epi} frames {b_step}-{b_step+2} similarity: {best_sim:.4f}"
             )
             print(msg)
+            log_f.write(msg + "\n")
+
             img_path = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
             )
-            _visualize_snippet_match(snippets[i], snippets[best_j], img_path)
+            _visualize_snippet_match(
+                full_seqs[i],
+                step,
+                full_seqs[best_j],
+                b_step,
+                img_path,
+            )
 
     log_f.close()
-    
-    
+
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
