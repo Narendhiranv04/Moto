@@ -381,55 +381,33 @@ def _visualize_snippet_match(query_seq, q_start, ref_seq, r_start, save_path):
     plt.close()
 
 
-def _snippet_match_video(query_seq, q_start, ref_seq, r_start, save_path):
-    """Save an MP4 animation showing the snippet match over time."""
+def _snippet_match_video(query_frames, q_start, ref_frames, r_start, save_path, post_process):
+    """Save an MP4 video of two matched snippets shown side by side.
+
+    This purely serves as a visual aid using decoded frames. The latent
+    matching logic never relies on these frames.
+    """
     snippet_len = 3
-    vectors = np.concatenate([query_seq, ref_seq], axis=0)
-    if vectors.shape[0] < 2:
+    q_clip = query_frames[q_start : q_start + snippet_len]
+    r_clip = ref_frames[r_start : r_start + snippet_len]
+
+    q_imgs = post_process(q_clip)
+    r_imgs = post_process(r_clip)
+    if not q_imgs or not r_imgs:
         return
 
-    coords = PCA(n_components=2).fit_transform(vectors)
-    q_full = coords[: len(query_seq)]
-    r_full = coords[len(query_seq) :]
-
-    q_coords = q_full[q_start : q_start + snippet_len]
-    r_coords = r_full[r_start : r_start + snippet_len]
-
-    w, h = 400, 400
+    w, h = q_imgs[0].size
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_writer = cv2.VideoWriter(save_path, fourcc, 1, (w, h))
-    for t in range(snippet_len):
-        plt.figure(figsize=(4, 4))
-        plt.plot(q_full[:, 0], q_full[:, 1], linestyle=":", color="red", alpha=0.5)
-        plt.plot(r_full[:, 0], r_full[:, 1], linestyle=":", color="blue", alpha=0.5)
-        plt.plot(q_coords[: t + 1, 0], q_coords[: t + 1, 1], "-o", color="red")
-        plt.plot(r_coords[: t + 1, 0], r_coords[: t + 1, 1], "-o", color="blue")
-        plt.annotate(
-            "",
-            xy=q_coords[t],
-            xytext=q_coords[0],
-            arrowprops=dict(arrowstyle="->", color="red", lw=2),
-        )
-        plt.annotate(
-            "",
-            xy=r_coords[t],
-            xytext=r_coords[0],
-            arrowprops=dict(arrowstyle="->", color="blue", lw=2),
-        )
-        plt.xlabel("PC1")
-        plt.ylabel("PC2")
-        plt.tight_layout()
-        buf = BytesIO()
-        plt.savefig(buf, format="png")
-        plt.close()
-        buf.seek(0)
-        image = Image.open(buf).convert("RGB").resize((w, h))
-        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    video_writer = cv2.VideoWriter(save_path, fourcc, 1, (w * 2, h))
+    for qi, ri in zip(q_imgs, r_imgs):
+        canvas = Image.new("RGB", (w * 2, h))
+        canvas.paste(qi, (0, 0))
+        canvas.paste(ri, (w, 0))
+        frame = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
         video_writer.write(frame)
     video_writer.release()
 
-
-
+   
 def _embed_snippet(snippet):
     """Embed a 3-frame snippet with mean and delta features."""
     snippet = np.asarray(snippet)
@@ -470,8 +448,12 @@ def _build_faiss_index(embeddings):
         return BruteForceIndex(normalized)
 
 
-def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, top_k=5):
-    """Compare motion snippets across tasks using FAISS and Soft-DTW."""
+def subtrajectory_faiss_analysis(task_to_vecs, task_to_frames, save_dir, post_process, delta_threshold=1e-3, top_k=5):
+    """Compare 3-frame latent snippets across tasks.
+
+    Embeddings are computed solely from latent vectors. Decoded frames are
+    optional and used only for the saved MP4 visualizations.
+    """
     os.makedirs(save_dir, exist_ok=True)
     log_path = os.path.join(save_dir, "matches.log")
     log_f = open(log_path, "w")
@@ -480,11 +462,14 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
     meta = []
     snippets = []
     full_seqs = []
+    full_frames = []
     tasks = list(task_to_vecs.keys())
 
     for task in tasks:
+        frame_list = task_to_frames.get(task, [])
         for epi_idx, seq in enumerate(task_to_vecs[task]):
             arr = seq.detach().cpu().numpy()
+            frames_arr = frame_list[epi_idx] if epi_idx < len(frame_list) else None
             for t_idx in range(len(arr) - 2):
                 snippet = arr[t_idx : t_idx + 3]
                 emb = _embed_snippet(snippet)
@@ -494,7 +479,8 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 meta.append((task, epi_idx, t_idx))
                 snippets.append(snippet)
                 full_seqs.append(arr)
-
+                full_frames.append(frames_arr)
+                
     if not embeddings:
         return
 
@@ -534,6 +520,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             )
             print(msg)
             log_f.write(msg + "\n")
+
             match_dir = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}"
@@ -548,13 +535,15 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 b_step,
                 img_path,
             )
-            _snippet_match_video(
-                full_seqs[i],
-                step,
-                full_seqs[best_j],
-                b_step,
-                video_path,
-            )
+            if full_frames[i] is not None and full_frames[best_j] is not None:
+                _snippet_match_video(
+                    full_frames[i],
+                    step,
+                    full_frames[best_j],
+                    b_step,
+                    video_path,
+                    post_process,
+                )
 
     log_f.close()
 
@@ -712,6 +701,7 @@ def inference(
                 print("RMSE per step:", rmse)
                 metrics["task_to_rmses"][lang_goal].append(rmse.cpu())
                 metrics["task_to_preds"][lang_goal].append(pred_vec.detach().cpu())
+                metrics["task_to_frames"][lang_goal].append(frame_preds.clone())
                 vec_np = pred_vec.detach().cpu().numpy()
                 base = os.path.splitext(video_basename)[0]
                 tsne_video(vec_np, os.path.join(output_dir, f"{base}_tsne.mp4"))
@@ -783,7 +773,9 @@ def main(args):
     )
     subtrajectory_faiss_analysis(
         metrics["task_to_preds"],
+        metrics["task_to_frames"],
         os.path.join(args.output_dir, "subtrajectory_matches"),
+        image_seq_post_processor,
     )
 
 
