@@ -216,18 +216,23 @@ def tsne_trajectory_plot(f, episode_id, save_path):
     plt.close()
 
 
-def tsne_cluster_plot(task_to_vecs, save_path):
-    """Plot t-SNE of all latent vectors colored by task."""
+def tsne_cluster_plot(task_to_vecs, save_dir):
+    """Run t-SNE on all frames and plot trajectories per task."""
     all_vecs = []
-    labels = []
+    meta = []  # (task, episode_idx, frame_idx, norm_time)
     for task, vec_list in task_to_vecs.items():
-        for vec in vec_list:
-            v = vec.detach().cpu().numpy().reshape(-1, vec.shape[-1])
+        for epi_idx, vec in enumerate(vec_list):
+            v = vec.detach().cpu().numpy()
+            T = v.shape[0]
             all_vecs.append(v)
-            labels.extend([task] * v.shape[0])
+            for t in range(T):
+                norm_t = t / (T - 1) if T > 1 else 0.0
+                meta.append((task, epi_idx, t, norm_t))
+
     if len(all_vecs) < 2:
         print("Cluster t-SNE skipped: not enough samples")
         return
+
     X = np.concatenate(all_vecs, axis=0)
     perplexity = min(30, max(5, len(X) // 3))
     try:
@@ -235,18 +240,39 @@ def tsne_cluster_plot(task_to_vecs, save_path):
     except Exception as e:
         print(f"Cluster t-SNE failed: {e}")
         return
-    unique_labels = sorted(set(labels))
-    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
-    plt.figure(figsize=(6, 6))
-    for i, lab in enumerate(unique_labels):
-        idx = [j for j, l in enumerate(labels) if l == lab]
-        plt.scatter(Z[idx, 0], Z[idx, 1], s=10, color=colors[i], label=lab, alpha=0.7)
-    plt.legend(fontsize=6, bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.title('t-SNE of latent vectors across tasks')
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
 
+    os.makedirs(save_dir, exist_ok=True)
+    cmap = plt.get_cmap('viridis')
+    task_names = list(task_to_vecs.keys())
+    for task in task_names:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        task_indices = [i for i, m in enumerate(meta) if m[0] == task]
+        if not task_indices:
+            plt.close(fig)
+            continue
+        # group by episode
+        ep_groups = defaultdict(list)
+        for idx in task_indices:
+            _, epi_idx, frame_idx, norm_t = meta[idx]
+            ep_groups[epi_idx].append((frame_idx, Z[idx], norm_t))
+        for ep_id in sorted(ep_groups.keys()):
+            pts = sorted(ep_groups[ep_id], key=lambda x: x[0])
+            coords = np.array([p[1] for p in pts])
+            times = [p[2] for p in pts]
+            for i in range(len(coords) - 1):
+                ax.plot(coords[i:i+2, 0], coords[i:i+2, 1], color=cmap(times[i]), linewidth=2, alpha=0.8)
+            ax.scatter(coords[0, 0], coords[0, 1], c='white', edgecolors='black', s=60, zorder=3)
+            ax.scatter(coords[-1, 0], coords[-1, 1], c='black', s=60, zorder=3)
+
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+        sm.set_array([])
+        fig.colorbar(sm, ax=ax, label='normalized time')
+        ax.set_xlabel('t-SNE-1')
+        ax.set_ylabel('t-SNE-2')
+        ax.set_title(f"t-SNE trajectory for task: {task}")
+        fig.tight_layout()
+        fig.savefig(os.path.join(save_dir, f"{task}_tsne.png"))
+        plt.close(fig)
 
 def inference(
         moto_gpt,
@@ -466,8 +492,8 @@ def main(args):
         print(f"RMSE per step for {task}:", rmse_tensor)
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
-
-    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_clusters.png"))
+        
+    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
 
 
 
