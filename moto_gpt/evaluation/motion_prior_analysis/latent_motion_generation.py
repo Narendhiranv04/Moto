@@ -463,7 +463,6 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 f"{b_task} ep{b_epi} frames {b_step}-{b_step+2} similarity: {best_sim:.4f}"
             )
             print(msg)
-            log_f.write(msg + "\n")
             img_path = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
@@ -471,7 +470,8 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             _visualize_snippet_match(snippets[i], snippets[best_j], img_path)
 
     log_f.close()
-
+    
+    
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
