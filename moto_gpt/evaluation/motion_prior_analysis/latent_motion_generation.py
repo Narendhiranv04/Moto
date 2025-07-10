@@ -337,6 +337,56 @@ def aligned_cosine_similarities(task_to_vecs):
             if sims:
                 print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
 
+def compare_subtrajectories(task_to_vecs, output_dir):
+    """Match single-step subtrajectories to full trajectories with DTW."""
+    os.makedirs(output_dir, exist_ok=True)
+    logs = []
+    pair_id = 0
+    for task_name, seqs in task_to_vecs.items():
+        for seq_idx, seq_tensor in enumerate(seqs):
+            seq = np.asarray(seq_tensor)
+            for t in range(seq.shape[0]):
+                query = seq[t:t+1]
+                best = None
+                best_cost = float('inf')
+                for ref_task, ref_seqs in task_to_vecs.items():
+                    for ref_idx, ref_tensor in enumerate(ref_seqs):
+                        ref_seq = np.asarray(ref_tensor)
+                        cost, start, end, path = _subsequence_dtw(query, ref_seq)
+                        if cost < best_cost:
+                            best_cost = cost
+                            best = (ref_task, ref_idx, start, end, path, ref_seq)
+                if best is None:
+                    continue
+                ref_task, ref_idx, start, end, path, ref_seq = best
+                cos_sim = _path_cosine_similarity(query, ref_seq[start:end+1], path)
+                log_line = (
+                    f"{task_name}[{seq_idx}] step {t} -> {ref_task}[{ref_idx}] "
+                    f"segment {start}-{end} cost {best_cost:.4f} cos {cos_sim:.4f}"
+                )
+                print(log_line)
+                logs.append(log_line)
+
+                fig, ax = plt.subplots()
+                ax.plot([0], query[:, 0], 'ro', label=f'{task_name}[{seq_idx}]@{t}')
+                ax.plot(range(start, end + 1), ref_seq[start:end + 1, 0], 'bo-', label=f'{ref_task}[{ref_idx}] segment')
+                for qi, ri in path:
+                    ax.plot([qi, ri - start], [query[qi, 0], ref_seq[ri, 0]], 'k--', linewidth=1)
+                ax.legend()
+                ax.set_xlabel('time step')
+                ax.set_ylabel('embedding value')
+                ax.set_title('Subtrajectory DTW alignment')
+                fig_path = os.path.join(output_dir, f'pair_{pair_id}.png')
+                fig.savefig(fig_path)
+                plt.close(fig)
+                pair_id += 1
+
+    with open(os.path.join(output_dir, 'subtrajectory_matches.log'), 'w') as f:
+        for line in logs:
+            f.write(line + '\n')
+
+    return logs
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -558,6 +608,7 @@ def main(args):
 
     tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
     aligned_cosine_similarities(metrics["task_to_preds"])
+    compare_subtrajectories(metrics["task_to_preds"], os.path.join(args.output_dir, "subtrajectory_dtw"))
 
 
 
