@@ -183,6 +183,38 @@ def principal_component_ribbon(vectors, path, delta_t):
     plt.close()
 
 
+def tsne_trajectory_plot(f, episode_id, save_path):
+    """Plot a connected t-SNE trajectory with time-coded colours."""
+    X = f.detach().cpu().numpy()
+    T = X.shape[0]
+    if T < 2:
+        print("t-SNE trajectory skipped: not enough samples")
+        return
+    perplexity = min(30, max(5, T // 3))
+    try:
+        tsne = TSNE(n_components=2, perplexity=perplexity, metric='cosine', init='pca', random_state=0)
+        Z = tsne.fit_transform(X)
+    except Exception as e:
+        print(f"t-SNE trajectory failed: {e}")
+        return
+
+    norm_time = np.linspace(0, 1, T - 1)
+    cmap = plt.get_cmap('viridis')
+    fig, ax = plt.subplots()
+    for i in range(T - 1):
+        ax.plot(Z[i:i+2, 0], Z[i:i+2, 1], color=cmap(norm_time[i]), linewidth=2, alpha=0.8)
+    ax.scatter(Z[0, 0], Z[0, 1], c='white', edgecolors='black', s=80, label='start', zorder=3)
+    ax.scatter(Z[-1, 0], Z[-1, 1], c='black', s=80, label='end', zorder=3)
+    sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(0, 1))
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, label='normalized time')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(f"Episode {episode_id} latent-space trajectory")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -343,6 +375,8 @@ def inference(
                 latent_speed_curve(vec_np, os.path.join(output_dir, f"{base}_speed.png"), delta_t)
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
+                tsne_trajectory_plot(pred_vec.detach().cpu(), base, os.path.join(output_dir, f"{base}_tsne_traj.png"))
+                
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
