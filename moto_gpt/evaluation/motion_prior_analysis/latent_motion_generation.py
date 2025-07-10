@@ -446,6 +446,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
                 snippets.append(snippet)
                 full_seqs.append(arr)
 
+
     if not embeddings:
         return
 
@@ -485,6 +486,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             )
             print(msg)
             log_f.write(msg + "\n")
+
             img_path = os.path.join(
                 save_dir,
                 f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}.png",
@@ -498,6 +500,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, save_dir, delta_threshold=1e-3, t
             )
 
     log_f.close()
+
 
 def inference(
         moto_gpt,
