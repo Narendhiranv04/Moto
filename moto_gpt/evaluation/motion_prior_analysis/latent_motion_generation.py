@@ -492,8 +492,9 @@ def main(args):
         print(f"RMSE per step for {task}:", rmse_tensor)
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
-
+        
     tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
+
 
 
 if __name__ == '__main__':
