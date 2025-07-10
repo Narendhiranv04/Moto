@@ -216,18 +216,23 @@ def tsne_trajectory_plot(f, episode_id, save_path):
     plt.close()
 
 
-def tsne_cluster_plot(task_to_vecs, save_path):
-    """Plot t-SNE of all latent vectors colored by task."""
+def tsne_cluster_plot(task_to_vecs, save_dir):
+    """Run t-SNE on all frames and plot trajectories per task."""
     all_vecs = []
-    labels = []
+    meta = []  # (task, episode_idx, frame_idx, norm_time)
     for task, vec_list in task_to_vecs.items():
-        for vec in vec_list:
-            v = vec.detach().cpu().numpy().reshape(-1, vec.shape[-1])
+        for epi_idx, vec in enumerate(vec_list):
+            v = vec.detach().cpu().numpy()
+            T = v.shape[0]
             all_vecs.append(v)
-            labels.extend([task] * v.shape[0])
+            for t in range(T):
+                norm_t = t / (T - 1) if T > 1 else 0.0
+                meta.append((task, epi_idx, t, norm_t))
+
     if len(all_vecs) < 2:
         print("Cluster t-SNE skipped: not enough samples")
         return
+
     X = np.concatenate(all_vecs, axis=0)
     perplexity = min(30, max(5, len(X) // 3))
     try:
@@ -235,18 +240,102 @@ def tsne_cluster_plot(task_to_vecs, save_path):
     except Exception as e:
         print(f"Cluster t-SNE failed: {e}")
         return
-    unique_labels = sorted(set(labels))
-    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
-    plt.figure(figsize=(6, 6))
-    for i, lab in enumerate(unique_labels):
-        idx = [j for j, l in enumerate(labels) if l == lab]
-        plt.scatter(Z[idx, 0], Z[idx, 1], s=10, color=colors[i], label=lab, alpha=0.7)
-    plt.legend(fontsize=6, bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.title('t-SNE of latent vectors across tasks')
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
 
+    os.makedirs(save_dir, exist_ok=True)
+    cmap = plt.get_cmap('viridis')
+    task_names = list(task_to_vecs.keys())
+    for task in task_names:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        task_indices = [i for i, m in enumerate(meta) if m[0] == task]
+        if not task_indices:
+            plt.close(fig)
+            continue
+        # group by episode
+        ep_groups = defaultdict(list)
+        for idx in task_indices:
+            _, epi_idx, frame_idx, norm_t = meta[idx]
+            ep_groups[epi_idx].append((frame_idx, Z[idx], norm_t))
+        for ep_id in sorted(ep_groups.keys()):
+            pts = sorted(ep_groups[ep_id], key=lambda x: x[0])
+            coords = np.array([p[1] for p in pts])
+            times = [p[2] for p in pts]
+            for i in range(len(coords) - 1):
+                ax.plot(coords[i:i+2, 0], coords[i:i+2, 1], color=cmap(times[i]), linewidth=2, alpha=0.8)
+            ax.scatter(coords[0, 0], coords[0, 1], c='white', edgecolors='black', s=60, zorder=3)
+            ax.scatter(coords[-1, 0], coords[-1, 1], c='black', s=60, zorder=3)
+
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+        sm.set_array([])
+        fig.colorbar(sm, ax=ax, label='normalized time')
+        ax.set_xlabel('t-SNE-1')
+        ax.set_ylabel('t-SNE-2')
+        ax.set_title(f"t-SNE trajectory for task: {task}")
+        fig.tight_layout()
+        fig.savefig(os.path.join(save_dir, f"{task}_tsne.png"))
+        plt.close(fig)
+
+def _subsequence_dtw(query, reference):
+    """Subsequence DTW distance between query and reference.
+
+    Returns the minimal cost, start index in reference, end index and the path.
+    Both query and reference are numpy arrays of shape (T, D).
+    """
+    m, d = query.shape
+    n = reference.shape[0]
+    dist = np.linalg.norm(query[:, None, :] - reference[None, :, :], axis=2)
+    dp = np.full((m + 1, n + 1), np.inf)
+    dp[0, :] = 0
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = dist[i - 1, j - 1]
+            dp[i, j] = cost + min(dp[i - 1, j - 1], dp[i - 1, j], dp[i, j - 1])
+
+    j_min = np.argmin(dp[m, 1:]) + 1
+    cost = dp[m, j_min]
+    path = []
+    i, j = m, j_min
+    while i > 0:
+        path.append((i - 1, j - 1))
+        choices = [dp[i - 1, j - 1], dp[i - 1, j], dp[i, j - 1]]
+        arg = np.argmin(choices)
+        if arg == 0:
+            i -= 1
+            j -= 1
+        elif arg == 1:
+            i -= 1
+        else:
+            j -= 1
+    path.reverse()
+    start = path[0][1]
+    end = path[-1][1]
+    return cost, start, end, path
+
+def _path_cosine_similarity(query, reference, path):
+    cos = []
+    for i, j in path:
+        a = query[i]
+        b = reference[j]
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        if denom == 0:
+            cos.append(0.0)
+        else:
+            cos.append(float(np.dot(a, b) / denom))
+    return float(np.mean(cos)) if cos else 0.0
+
+def aligned_cosine_similarities(task_to_vecs):
+    """Compute cosine similarity between tasks using DTW alignment."""
+    tasks = list(task_to_vecs.keys())
+    for i in range(len(tasks)):
+        for j in range(i + 1, len(tasks)):
+            sims = []
+            for seq_a in task_to_vecs[tasks[i]]:
+                a = seq_a.detach().cpu().numpy()
+                for seq_b in task_to_vecs[tasks[j]]:
+                    b = seq_b.detach().cpu().numpy()
+                    _, _, _, path = _subsequence_dtw(a, b)
+                    sims.append(_path_cosine_similarity(a, b, path))
+            if sims:
+                print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
 
 def inference(
         moto_gpt,
@@ -467,7 +556,8 @@ def main(args):
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
 
-    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_clusters.png"))
+    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
+    aligned_cosine_similarities(metrics["task_to_preds"])
 
 
 
