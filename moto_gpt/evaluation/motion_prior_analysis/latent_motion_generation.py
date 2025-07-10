@@ -215,6 +215,39 @@ def tsne_trajectory_plot(f, episode_id, save_path):
     plt.savefig(save_path)
     plt.close()
 
+
+def tsne_cluster_plot(task_to_vecs, save_path):
+    """Plot t-SNE of all latent vectors colored by task."""
+    all_vecs = []
+    labels = []
+    for task, vec_list in task_to_vecs.items():
+        for vec in vec_list:
+            v = vec.detach().cpu().numpy().reshape(-1, vec.shape[-1])
+            all_vecs.append(v)
+            labels.extend([task] * v.shape[0])
+    if len(all_vecs) < 2:
+        print("Cluster t-SNE skipped: not enough samples")
+        return
+    X = np.concatenate(all_vecs, axis=0)
+    perplexity = min(30, max(5, len(X) // 3))
+    try:
+        Z = TSNE(n_components=2, perplexity=perplexity, metric='cosine', init='pca', random_state=0).fit_transform(X)
+    except Exception as e:
+        print(f"Cluster t-SNE failed: {e}")
+        return
+    unique_labels = sorted(set(labels))
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
+    plt.figure(figsize=(6, 6))
+    for i, lab in enumerate(unique_labels):
+        idx = [j for j, l in enumerate(labels) if l == lab]
+        plt.scatter(Z[idx, 0], Z[idx, 1], s=10, color=colors[i], label=lab, alpha=0.7)
+    plt.legend(fontsize=6, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title('t-SNE of latent vectors across tasks')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
 def inference(
         moto_gpt,
         latent_motion_tokenizer,
@@ -376,7 +409,7 @@ def inference(
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
                 tsne_trajectory_plot(pred_vec.detach().cpu(), base, os.path.join(output_dir, f"{base}_tsne_traj.png"))
-                
+
         basename = os.path.basename(video_path).split(".")[0]
         visualization(
             lang_goal=lang_goal,
@@ -433,6 +466,9 @@ def main(args):
         print(f"RMSE per step for {task}:", rmse_tensor)
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
+
+    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_clusters.png"))
+
 
 
 if __name__ == '__main__':
