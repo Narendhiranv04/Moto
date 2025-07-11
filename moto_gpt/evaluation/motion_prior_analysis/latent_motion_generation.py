@@ -115,12 +115,52 @@ def tsne_video(vectors, path, fps=4):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
     for i in range(len(coords)):
-        plt.figure(figsize=(4,4))
-        plt.scatter(coords[:i+1,0], coords[:i+1,1], c=np.arange(i+1), cmap='viridis')
-        plt.plot(coords[:i+1,0], coords[:i+1,1], c='gray')
-        plt.axis('off')
+        plt.figure(figsize=(4, 4))
+        plt.scatter(coords[: i + 1, 0], coords[: i + 1, 1], c=np.arange(i + 1), cmap='viridis')
+        plt.plot(coords[: i + 1, 0], coords[: i + 1, 1], c='gray')
+        plt.xlabel('t-SNE-1')
+        plt.ylabel('t-SNE-2')
+        plt.tight_layout()
         buf = BytesIO()
         plt.savefig(buf, format='png')
+        plt.close()
+        buf.seek(0)
+        image = Image.open(buf)
+        image = image.resize((w, h))
+        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+def tsne_snippet_video(vectors, path, window=3, fps=2):
+    """Visualize sequential 3-frame snippets on a t-SNE plot."""
+    n_samples = len(vectors)
+    if n_samples < window:
+        print("Snippet TSNE skipped: not enough samples")
+        return
+    perplexity = min(30, n_samples - 1)
+    try:
+        tsne = TSNE(n_components=2, random_state=0, perplexity=perplexity)
+        coords = tsne.fit_transform(vectors)
+    except Exception as e:
+        print(f"Snippet TSNE failed: {e}")
+        return
+
+    w, h = 400, 400
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+    for i in range(n_samples - window + 1):
+        plt.figure(figsize=(4, 4))
+        plt.scatter(coords[:, 0], coords[:, 1], s=10, color="lightgray")
+        plt.plot(coords[:, 0], coords[:, 1], color="lightgray", alpha=0.5)
+        sub = coords[i : i + window]
+        plt.plot(sub[:, 0], sub[:, 1], "-o", color="red", label="snippet")
+        plt.xlabel("t-SNE-1")
+        plt.ylabel("t-SNE-2")
+        plt.legend()
+        plt.tight_layout()
+        buf = BytesIO()
+        plt.savefig(buf, format="png")
         plt.close()
         buf.seek(0)
         image = Image.open(buf)
@@ -208,8 +248,8 @@ def tsne_trajectory_plot(f, episode_id, save_path):
     sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(0, 1))
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, label='normalized time')
-    ax.set_xticks([])
-    ax.set_yticks([])
+    ax.set_xlabel('t-SNE-1')
+    ax.set_ylabel('t-SNE-2')
     ax.set_title(f"Episode {episode_id} latent-space trajectory")
     plt.tight_layout()
     plt.savefig(save_path)
@@ -336,6 +376,216 @@ def aligned_cosine_similarities(task_to_vecs):
                     sims.append(_path_cosine_similarity(a, b, path))
             if sims:
                 print(f"Aligned cosine similarity between {tasks[i]} and {tasks[j]}: {np.mean(sims):.6f}")
+
+
+def _visualize_snippet_match(query_seq, q_start, ref_seq, r_start, save_path):
+    """Visualize two matched snippets within their full trajectories."""
+    snippet_len = 3
+    vectors = np.concatenate([query_seq, ref_seq], axis=0)
+    if vectors.shape[0] < 2:
+        return
+
+    coords = PCA(n_components=2).fit_transform(vectors)
+    q_full = coords[: len(query_seq)]
+    r_full = coords[len(query_seq) :]
+
+    q_coords = q_full[q_start : q_start + snippet_len]
+    r_coords = r_full[r_start : r_start + snippet_len]
+
+    plt.figure()
+    plt.plot(
+        q_full[:, 0],
+        q_full[:, 1],
+        linestyle=':',
+        color='red',
+        alpha=0.5,
+        label='query full',
+    )
+    plt.plot(
+        r_full[:, 0],
+        r_full[:, 1],
+        linestyle=':',
+        color='blue',
+        alpha=0.5,
+        label='reference full',
+    )
+    plt.plot(q_coords[:, 0], q_coords[:, 1], '-o', color='red', label='query snippet')
+    plt.plot(r_coords[:, 0], r_coords[:, 1], '-o', color='blue', label='reference snippet')
+    plt.annotate('', xy=q_coords[-1], xytext=q_coords[0], arrowprops=dict(arrowstyle='->', color='red', lw=2))
+    plt.annotate('', xy=r_coords[-1], xytext=r_coords[0], arrowprops=dict(arrowstyle='->', color='blue', lw=2))
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
+def _snippet_match_video(query_frames, q_start, ref_frames, r_start, save_path, post_process):
+    """Save an MP4 video of two matched snippets shown side by side.
+
+    This purely serves as a visual aid using decoded frames. The latent
+    matching logic never relies on these frames.
+    """
+    snippet_len = 3
+    q_clip = query_frames[q_start : q_start + snippet_len]
+    r_clip = ref_frames[r_start : r_start + snippet_len]
+
+    q_imgs = post_process(q_clip)
+    r_imgs = post_process(r_clip)
+    if not q_imgs or not r_imgs:
+        return
+
+    w, h = q_imgs[0].size
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(save_path, fourcc, 1, (w * 2, h))
+    for qi, ri in zip(q_imgs, r_imgs):
+        canvas = Image.new("RGB", (w * 2, h))
+        canvas.paste(qi, (0, 0))
+        canvas.paste(ri, (w, 0))
+        frame = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+def _embed_snippet(snippet):
+    """Embed a 3-frame snippet with mean and delta features."""
+    snippet = np.asarray(snippet)
+    mean_feat = snippet.mean(axis=0)
+    delta_feat = snippet[-1] - snippet[0]
+    return np.concatenate([mean_feat, delta_feat], axis=0)
+
+
+def _build_faiss_index(embeddings):
+    """Build a FAISS index if possible, otherwise fall back to brute force."""
+    try:
+        import faiss  # type: ignore
+
+        embeddings = embeddings.astype("float32")
+        faiss.normalize_L2(embeddings)
+        index = faiss.IndexFlatIP(embeddings.shape[1])
+        index.add(embeddings)
+        return index
+    except Exception as e:  # pragma: no cover - faiss may not be installed
+        print(f"FAISS unavailable ({e}); falling back to brute force index")
+
+        embeddings = embeddings.astype("float32")
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1e-6
+        normalized = embeddings / norms
+
+        class BruteForceIndex:
+            def __init__(self, embs):
+                self.embs = embs
+
+            def search(self, q, k):
+                q_norm = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-6)
+                sims = np.dot(self.embs, q_norm.T).T
+                idx = np.argsort(-sims, axis=1)[:, :k]
+                dist = np.take_along_axis(sims, idx, axis=1)
+                return dist.astype("float32"), idx.astype("int64")
+
+        return BruteForceIndex(normalized)
+
+
+def subtrajectory_faiss_analysis(task_to_vecs, task_to_frames, save_dir, post_process, delta_threshold=1e-3, top_k=5):
+    """Compare 3-frame latent snippets across tasks.
+
+    Embeddings are computed solely from latent vectors. Decoded frames are
+    optional and used only for the saved MP4 visualizations.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    log_path = os.path.join(save_dir, "matches.log")
+    log_f = open(log_path, "w")
+
+    embeddings = []
+    meta = []
+    snippets = []
+    full_seqs = []
+    full_frames = []
+    tasks = list(task_to_vecs.keys())
+
+    for task in tasks:
+        frame_list = task_to_frames.get(task, [])
+        for epi_idx, seq in enumerate(task_to_vecs[task]):
+            arr = seq.detach().cpu().numpy()
+            frames_arr = frame_list[epi_idx] if epi_idx < len(frame_list) else None
+            for t_idx in range(len(arr) - 2):
+                snippet = arr[t_idx : t_idx + 3]
+                emb = _embed_snippet(snippet)
+                if np.linalg.norm(emb[arr.shape[1] :]) < delta_threshold:
+                    continue
+                embeddings.append(emb)
+                meta.append((task, epi_idx, t_idx))
+                snippets.append(snippet)
+                full_seqs.append(arr)
+                full_frames.append(frames_arr)
+
+    if not embeddings:
+        return
+
+    embeddings = np.stack(embeddings).astype("float32")
+    index = _build_faiss_index(embeddings.copy())
+
+    try:
+        import faiss
+        faiss.write_index(index, os.path.join(save_dir, "subaction.index"))
+    except Exception:
+        pass
+    with open(os.path.join(save_dir, "subaction_meta.json"), "w") as f:
+        json.dump([
+            {"task": t, "episode": int(e), "step": int(s)} for t, e, s in meta
+        ], f)
+
+    for i, (task, epi, step) in enumerate(meta):
+        D, I = index.search(embeddings[i : i + 1], top_k + 1)
+        best_j = None
+        best_sim = -np.inf
+        for j in I[0]:
+            if j == i:
+                continue
+            b_task, b_epi, b_step = meta[j]
+            if b_task == task:
+                continue
+            _, _, _, path = _subsequence_dtw(snippets[i], snippets[j])
+            sim = _path_cosine_similarity(snippets[i], snippets[j], path)
+            if sim > best_sim:
+                best_sim = sim
+                best_j = j
+        if best_j is not None:
+            b_task, b_epi, b_step = meta[best_j]
+            msg = (
+                f"Snippet {task} ep{epi} frames {step}-{step+2} -> "
+                f"{b_task} ep{b_epi} frames {b_step}-{b_step+2} similarity: {best_sim:.4f}"
+            )
+            print(msg)
+            log_f.write(msg + "\n")
+
+            match_dir = os.path.join(
+                save_dir,
+                f"{task}_ep{epi}_step{step}_to_{b_task}_ep{b_epi}_step{b_step}"
+            )
+            os.makedirs(match_dir, exist_ok=True)
+            img_path = os.path.join(match_dir, "match.png")
+            video_path = os.path.join(match_dir, "match.mp4")
+            _visualize_snippet_match(
+                full_seqs[i],
+                step,
+                full_seqs[best_j],
+                b_step,
+                img_path,
+            )
+            if full_frames[i] is not None and full_frames[best_j] is not None:
+                _snippet_match_video(
+                    full_frames[i],
+                    step,
+                    full_frames[best_j],
+                    b_step,
+                    video_path,
+                    post_process,
+                )
+
+    log_f.close()
 
 def inference(
         moto_gpt,
@@ -480,20 +730,24 @@ def inference(
             }
 
             if decoding_mode == "sampleFalse_beam1":
-                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(gt_latent_motion_ids.long().to(device))
-                gt_vec = gt_vec.mean(dim=1)
+                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
+                    gt_latent_motion_ids.long().to(device)
+                )
+                gt_vec = gt_vec.reshape(gt_vec.shape[0], -1)
                 pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
                     latent_motion_id_preds.long().to(device)
                 )
-                pred_vec = pred_vec.mean(dim=1)
+                pred_vec = pred_vec.reshape(pred_vec.shape[0], -1)
                 rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean(dim=1))
                 print(f"Task: {lang_goal}")
                 print("RMSE per step:", rmse)
                 metrics["task_to_rmses"][lang_goal].append(rmse.cpu())
                 metrics["task_to_preds"][lang_goal].append(pred_vec.detach().cpu())
+                metrics["task_to_frames"][lang_goal].append(frame_preds.clone())
                 vec_np = pred_vec.detach().cpu().numpy()
                 base = os.path.splitext(video_basename)[0]
                 tsne_video(vec_np, os.path.join(output_dir, f"{base}_tsne.mp4"))
+                tsne_snippet_video(vec_np, os.path.join(output_dir, f"{base}_snippet_tsne.mp4"))
                 latent_speed_curve(vec_np, os.path.join(output_dir, f"{base}_speed.png"), delta_t)
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
@@ -556,8 +810,16 @@ def main(args):
         avg_rmse = rmse_tensor.mean().item()
         print(f"Average RMSE for {task}: {avg_rmse:.6f}")
 
-    tsne_cluster_plot(metrics["task_to_preds"], os.path.join(args.output_dir, "tsne_cluster_plots"))
-    aligned_cosine_similarities(metrics["task_to_preds"])
+    tsne_cluster_plot(
+        metrics["task_to_preds"],
+        os.path.join(args.output_dir, "tsne_cluster_plots"),
+    )
+    subtrajectory_faiss_analysis(
+        metrics["task_to_preds"],
+        metrics["task_to_frames"],
+        os.path.join(args.output_dir, "subtrajectory_matches"),
+        image_seq_post_processor,
+    )
 
 
 
