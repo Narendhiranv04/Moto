@@ -115,12 +115,52 @@ def tsne_video(vectors, path, fps=4):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
     for i in range(len(coords)):
-        plt.figure(figsize=(4,4))
-        plt.scatter(coords[:i+1,0], coords[:i+1,1], c=np.arange(i+1), cmap='viridis')
-        plt.plot(coords[:i+1,0], coords[:i+1,1], c='gray')
-        plt.axis('off')
+        plt.figure(figsize=(4, 4))
+        plt.scatter(coords[: i + 1, 0], coords[: i + 1, 1], c=np.arange(i + 1), cmap='viridis')
+        plt.plot(coords[: i + 1, 0], coords[: i + 1, 1], c='gray')
+        plt.xlabel('t-SNE-1')
+        plt.ylabel('t-SNE-2')
+        plt.tight_layout()
         buf = BytesIO()
         plt.savefig(buf, format='png')
+        plt.close()
+        buf.seek(0)
+        image = Image.open(buf)
+        image = image.resize((w, h))
+        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+def tsne_snippet_video(vectors, path, window=3, fps=2):
+    """Visualize sequential 3-frame snippets on a t-SNE plot."""
+    n_samples = len(vectors)
+    if n_samples < window:
+        print("Snippet TSNE skipped: not enough samples")
+        return
+    perplexity = min(30, n_samples - 1)
+    try:
+        tsne = TSNE(n_components=2, random_state=0, perplexity=perplexity)
+        coords = tsne.fit_transform(vectors)
+    except Exception as e:
+        print(f"Snippet TSNE failed: {e}")
+        return
+
+    w, h = 400, 400
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+    for i in range(n_samples - window + 1):
+        plt.figure(figsize=(4, 4))
+        plt.scatter(coords[:, 0], coords[:, 1], s=10, color="lightgray")
+        plt.plot(coords[:, 0], coords[:, 1], color="lightgray", alpha=0.5)
+        sub = coords[i : i + window]
+        plt.plot(sub[:, 0], sub[:, 1], "-o", color="red", label="snippet")
+        plt.xlabel("t-SNE-1")
+        plt.ylabel("t-SNE-2")
+        plt.legend()
+        plt.tight_layout()
+        buf = BytesIO()
+        plt.savefig(buf, format="png")
         plt.close()
         buf.seek(0)
         image = Image.open(buf)
@@ -208,8 +248,8 @@ def tsne_trajectory_plot(f, episode_id, save_path):
     sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(0, 1))
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, label='normalized time')
-    ax.set_xticks([])
-    ax.set_yticks([])
+    ax.set_xlabel('t-SNE-1')
+    ax.set_ylabel('t-SNE-2')
     ax.set_title(f"Episode {episode_id} latent-space trajectory")
     plt.tight_layout()
     plt.savefig(save_path)
@@ -407,7 +447,7 @@ def _snippet_match_video(query_frames, q_start, ref_frames, r_start, save_path, 
         video_writer.write(frame)
     video_writer.release()
 
-   
+
 def _embed_snippet(snippet):
     """Embed a 3-frame snippet with mean and delta features."""
     snippet = np.asarray(snippet)
@@ -480,7 +520,7 @@ def subtrajectory_faiss_analysis(task_to_vecs, task_to_frames, save_dir, post_pr
                 snippets.append(snippet)
                 full_seqs.append(arr)
                 full_frames.append(frames_arr)
-                
+
     if not embeddings:
         return
 
@@ -690,12 +730,14 @@ def inference(
             }
 
             if decoding_mode == "sampleFalse_beam1":
-                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(gt_latent_motion_ids.long().to(device))
-                gt_vec = gt_vec.mean(dim=1)
+                gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
+                    gt_latent_motion_ids.long().to(device)
+                )
+                gt_vec = gt_vec.reshape(gt_vec.shape[0], -1)
                 pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
                     latent_motion_id_preds.long().to(device)
                 )
-                pred_vec = pred_vec.mean(dim=1)
+                pred_vec = pred_vec.reshape(pred_vec.shape[0], -1)
                 rmse = torch.sqrt(((pred_vec - gt_vec) ** 2).mean(dim=1))
                 print(f"Task: {lang_goal}")
                 print("RMSE per step:", rmse)
@@ -705,6 +747,7 @@ def inference(
                 vec_np = pred_vec.detach().cpu().numpy()
                 base = os.path.splitext(video_basename)[0]
                 tsne_video(vec_np, os.path.join(output_dir, f"{base}_tsne.mp4"))
+                tsne_snippet_video(vec_np, os.path.join(output_dir, f"{base}_snippet_tsne.mp4"))
                 latent_speed_curve(vec_np, os.path.join(output_dir, f"{base}_speed.png"), delta_t)
                 feature_heatmap(vec_np, os.path.join(output_dir, f"{base}_heatmap.png"))
                 principal_component_ribbon(vec_np, os.path.join(output_dir, f"{base}_pca.png"), delta_t)
