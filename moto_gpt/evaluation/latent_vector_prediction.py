@@ -127,9 +127,11 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
     print(f"==> {os.path.basename(video_path)} : {lang_goal}")
     for i in range(0, exact_num_gen_frames, step_interval):
         gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
-            gt_latent_motion_ids[i:i+1].long().to(device)).view(-1).cpu().numpy()
+            gt_latent_motion_ids[i:i+1].long().to(device)
+        ).view(-1).detach().cpu().numpy()
         pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
-            latent_motion_id_preds[i:i+1].long().to(device)).view(-1).cpu().numpy()
+            latent_motion_id_preds[i:i+1].long().to(device)
+        ).view(-1).detach().cpu().numpy()
         print(f"Step {i+1} GT latent: {gt_vec}")
         print(f"Step {i+1} Pred latent: {pred_vec}")
         gt_img = image_seq_post_processor(subsequent_frames[i:i+1].cpu())[0]
