@@ -15,7 +15,7 @@ from PIL import Image
 from tqdm import tqdm
 from transformers import AutoTokenizer
 from transformers.utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo
-
+import numpy as np
 from common.models.model_utils import load_model
 
 
@@ -46,6 +46,37 @@ def save_compare_image(gt_img, pred_img, save_path):
     canvas.save(save_path)
 
 
+def save_video(frames, save_path, post_process, fps=4):
+    images = post_process(frames.cpu())
+    if not images:
+        return
+    w, h = images[0].size
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(save_path, fourcc, fps, (w, h))
+    for img in images:
+        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
+    gt_imgs = post_process(gt_frames.cpu())
+    pred_imgs = post_process(pred_frames.cpu())
+    if not gt_imgs or not pred_imgs:
+        return
+    w, h = gt_imgs[0].size
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(save_path, fourcc, fps, (w * 2, h))
+    for g, p in zip(gt_imgs, pred_imgs):
+        canvas = Image.new('RGB', (w * 2, h))
+        canvas.paste(g, (0, 0))
+        canvas.paste(p, (w, 0))
+        frame = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame)
+    video_writer.release()
+
+
+    
 def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
                    lang_tokenizer, image_processor, image_seq_post_processor,
                    seq_len, delta_t, step_interval, output_dir):
@@ -128,16 +159,47 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
     for i in range(0, exact_num_gen_frames, step_interval):
         gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
             gt_latent_motion_ids[i:i+1].long().to(device)
-        ).view(-1).detach().cpu().numpy()
+        ).view(-1)
         pred_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
             latent_motion_id_preds[i:i+1].long().to(device)
-        ).view(-1).detach().cpu().numpy()
-        print(f"Step {i+1} GT latent: {gt_vec}")
-        print(f"Step {i+1} Pred latent: {pred_vec}")
+        ).view(-1)
+        rmse = torch.sqrt(torch.mean((pred_vec - gt_vec) ** 2)).item()
+        gt_np = gt_vec.detach().cpu().numpy()
+        pred_np = pred_vec.detach().cpu().numpy()
+        print(
+            f"Step {i+1}/{exact_num_gen_frames} | GT size: {gt_np.shape} | Pred size: {pred_np.shape} | RMSE: {rmse:.6f}"
+        )
         gt_img = image_seq_post_processor(subsequent_frames[i:i+1].cpu())[0]
         pred_img = image_seq_post_processor(frame_preds[i:i+1])[0]
-        save_compare_image(gt_img, pred_img,
-                           os.path.join(output_dir, f"{os.path.basename(video_path).split('.')[0]}_step_{i+1}.png"))
+        save_compare_image(
+            gt_img,
+            pred_img,
+            os.path.join(
+                output_dir,
+                f"{os.path.basename(video_path).split('.')[0]}_step_{i+1}.png",
+            ),
+        )
+
+    # save full videos
+    pred_full = torch.cat([initial_frame.unsqueeze(0), frame_preds], dim=0)
+    gt_full = frames
+    base_name = os.path.basename(video_path).split(".")[0]
+    save_video(
+        pred_full,
+        os.path.join(output_dir, f"{base_name}_pred.mp4"),
+        image_seq_post_processor,
+    )
+    save_video(
+        gt_full,
+        os.path.join(output_dir, f"{base_name}_gt.mp4"),
+        image_seq_post_processor,
+    )
+    save_compare_video(
+        gt_full,
+        pred_full,
+        os.path.join(output_dir, f"{base_name}_compare.mp4"),
+        image_seq_post_processor,
+    )
 
 
 def main(args):
