@@ -96,7 +96,12 @@ def save_overview_image(gt_frames, pred_frames, gt_ids_list, pred_ids_list,
 
     w, h = gt_imgs[0].size
     font = ImageFont.load_default()
-    text_h = font.getsize("0")[1] + 2
+    try:
+        text_h = font.getsize("0")[1] + 2
+    except AttributeError:
+        # Pillow >=10 removed getsize; use getbbox instead
+        bbox = font.getbbox("0")
+        text_h = (bbox[3] - bbox[1]) + 2
     row_h = h + text_h
     num_steps = len(gt_imgs)
 
