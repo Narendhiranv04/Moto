@@ -1,3 +1,12 @@
+import os
+import sys
+
+# Manually add the repository root to the Python path so that local
+# packages can be imported without relying on `pyrootutils`.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, REPO_ROOT)
+
+import argparse
 import pyrootutils
 pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dotenv=True)
 
@@ -159,6 +168,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
     for i in range(0, exact_num_gen_frames, step_interval):
         gt_ids = gt_latent_motion_ids[i].detach().cpu().tolist()
         pred_ids = latent_motion_id_preds[i].detach().cpu().tolist()
+
         gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
             gt_latent_motion_ids[i:i+1].long().to(device)
         ).view(-1)
@@ -168,6 +178,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         rmse = torch.sqrt(torch.mean((pred_vec - gt_vec) ** 2)).item()
         print(
             f"Step {i+1}/{exact_num_gen_frames} | GT IDs: {gt_ids} | Pred IDs: {pred_ids} | RMSE: {rmse:.6f}"
+
         gt_img = image_seq_post_processor(subsequent_frames[i:i+1].cpu())[0]
         pred_img = image_seq_post_processor(frame_preds[i:i+1])[0]
         save_compare_image(
@@ -184,7 +195,6 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         initial_frame.cpu().unsqueeze(0),
         frame_preds
     ], dim=0)
-    gt_full = frames.cpu()
 
     base_name = os.path.basename(video_path).split(".")[0]
     save_video(
