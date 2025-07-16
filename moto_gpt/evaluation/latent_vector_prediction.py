@@ -16,7 +16,6 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from transformers.utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo
 import numpy as np
-
 from common.models.model_utils import load_model
 
 
@@ -77,6 +76,7 @@ def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
     video_writer.release()
 
 
+    
 def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
                    lang_tokenizer, image_processor, image_seq_post_processor,
                    seq_len, delta_t, step_interval, output_dir):
