@@ -7,7 +7,6 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, REPO_ROOT)
 
 import argparse
-
 import pyrootutils
 pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dotenv=True)
 
@@ -85,6 +84,34 @@ def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
         frame = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
         video_writer.write(frame)
     video_writer.release()
+
+def save_overview_image(gt_frames, pred_frames, gt_ids_list, pred_ids_list,
+                        save_path, post_process):
+    gt_imgs = post_process(gt_frames.cpu())
+    pred_imgs = post_process(pred_frames.cpu())
+    if not gt_imgs or not pred_imgs:
+        return
+
+    from PIL import ImageDraw, ImageFont
+
+    w, h = gt_imgs[0].size
+    font = ImageFont.load_default()
+    text_h = font.getsize("0")[1] + 2
+    row_h = h + text_h
+    num_steps = len(gt_imgs)
+
+    canvas = Image.new('RGB', (w * num_steps, row_h * 2), 'white')
+    draw = ImageDraw.Draw(canvas)
+
+    for idx, (img, ids) in enumerate(zip(gt_imgs, gt_ids_list)):
+        canvas.paste(img, (idx * w, 0))
+        draw.text((idx * w, h), " ".join(map(str, ids)), fill='black', font=font)
+
+    for idx, (img, ids) in enumerate(zip(pred_imgs, pred_ids_list)):
+        canvas.paste(img, (idx * w, row_h))
+        draw.text((idx * w, row_h + h), " ".join(map(str, ids)), fill='black', font=font)
+
+    canvas.save(save_path)
 
 
 def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
@@ -165,6 +192,10 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
     frame_preds = torch.cat(frame_preds, dim=0)[:exact_num_gen_frames]
     latent_motion_id_preds = torch.cat(latent_motion_id_preds, dim=0)[:exact_num_gen_frames]
 
+    gt_ids_all = gt_latent_motion_ids.detach().cpu()
+    pred_ids_all = latent_motion_id_preds.detach().cpu()
+
+
     print(f"==> {os.path.basename(video_path)} : {lang_goal}")
     for i in range(0, exact_num_gen_frames, step_interval):
         gt_ids = gt_latent_motion_ids[i].detach().cpu().tolist()
@@ -219,6 +250,15 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         gt_full,
         pred_full,
         os.path.join(output_dir, f"{base_name}_compare.mp4"),
+        image_seq_post_processor,
+    )
+
+    save_overview_image(
+        subsequent_frames,
+        frame_preds,
+        gt_ids_all.tolist(),
+        pred_ids_all.tolist(),
+        os.path.join(output_dir, f"{base_name}_overview.png"),
         image_seq_post_processor,
     )
 
