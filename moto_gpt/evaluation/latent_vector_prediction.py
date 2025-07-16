@@ -77,7 +77,6 @@ def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
     video_writer.release()
 
 
-
 def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
                    lang_tokenizer, image_processor, image_seq_post_processor,
                    seq_len, delta_t, step_interval, output_dir):
@@ -158,6 +157,8 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
 
     print(f"==> {os.path.basename(video_path)} : {lang_goal}")
     for i in range(0, exact_num_gen_frames, step_interval):
+        gt_ids = gt_latent_motion_ids[i].detach().cpu().tolist()
+        pred_ids = latent_motion_id_preds[i].detach().cpu().tolist()
         gt_vec = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(
             gt_latent_motion_ids[i:i+1].long().to(device)
         ).view(-1)
@@ -165,11 +166,8 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
             latent_motion_id_preds[i:i+1].long().to(device)
         ).view(-1)
         rmse = torch.sqrt(torch.mean((pred_vec - gt_vec) ** 2)).item()
-        gt_np = gt_vec.detach().cpu().numpy()
-        pred_np = pred_vec.detach().cpu().numpy()
         print(
-            f"Step {i+1}/{exact_num_gen_frames} | GT size: {gt_np.shape} | Pred size: {pred_np.shape} | RMSE: {rmse:.6f}"
-        )
+            f"Step {i+1}/{exact_num_gen_frames} | GT IDs: {gt_ids} | Pred IDs: {pred_ids} | RMSE: {rmse:.6f}"
         gt_img = image_seq_post_processor(subsequent_frames[i:i+1].cpu())[0]
         pred_img = image_seq_post_processor(frame_preds[i:i+1])[0]
         save_compare_image(
