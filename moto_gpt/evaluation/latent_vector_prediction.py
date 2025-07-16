@@ -77,6 +77,7 @@ def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
     video_writer.release()
 
 
+
 def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
                    lang_tokenizer, image_processor, image_seq_post_processor,
                    seq_len, delta_t, step_interval, output_dir):
@@ -186,6 +187,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         frame_preds
     ], dim=0)
     gt_full = frames.cpu()
+
     base_name = os.path.basename(video_path).split(".")[0]
     save_video(
         pred_full,
