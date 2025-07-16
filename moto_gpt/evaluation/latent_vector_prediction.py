@@ -7,6 +7,11 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, REPO_ROOT)
 
 import argparse
+import pyrootutils
+pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dotenv=True)
+
+import argparse
+import os
 import json
 import math
 from glob import glob
@@ -79,7 +84,6 @@ def save_compare_video(gt_frames, pred_frames, save_path, post_process, fps=4):
         frame = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
         video_writer.write(frame)
     video_writer.release()
-
 
 def save_overview_image(gt_frames, pred_frames, gt_ids_list, pred_ids_list,
                         save_path, post_process):
@@ -191,6 +195,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
     gt_ids_all = gt_latent_motion_ids.detach().cpu()
     pred_ids_all = latent_motion_id_preds.detach().cpu()
 
+
     print(f"==> {os.path.basename(video_path)} : {lang_goal}")
     for i in range(0, exact_num_gen_frames, step_interval):
         gt_ids = gt_latent_motion_ids[i].detach().cpu().tolist()
@@ -212,12 +217,14 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
 
         gt_img = image_seq_post_processor(subsequent_frames[i : i + 1].cpu())[0]
         pred_img = image_seq_post_processor(frame_preds[i : i + 1])[0]
+
         save_compare_image(
             gt_img,
             pred_img,
             os.path.join(
                 output_dir,
                 f"{os.path.basename(video_path).split('.')[0]}_step_{i + 1}.png",
+
             ),
         )
 
@@ -227,6 +234,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         frame_preds
     ], dim=0)
     gt_full = frames.cpu()
+
     base_name = os.path.basename(video_path).split(".")[0]
     save_video(
         pred_full,
