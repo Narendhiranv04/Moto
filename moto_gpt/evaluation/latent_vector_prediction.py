@@ -7,6 +7,11 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, REPO_ROOT)
 
 import argparse
+import pyrootutils
+pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dotenv=True)
+
+import argparse
+import os
 import json
 import math
 from glob import glob
@@ -173,7 +178,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         rmse = torch.sqrt(torch.mean((pred_vec - gt_vec) ** 2)).item()
         print(
             f"Step {i+1}/{exact_num_gen_frames} | GT IDs: {gt_ids} | Pred IDs: {pred_ids} | RMSE: {rmse:.6f}"
-        )
+
         gt_img = image_seq_post_processor(subsequent_frames[i:i+1].cpu())[0]
         pred_img = image_seq_post_processor(frame_preds[i:i+1])[0]
         save_compare_image(
@@ -190,7 +195,7 @@ def evaluate_video(video_path, lang_goal, moto_gpt, latent_motion_tokenizer,
         initial_frame.cpu().unsqueeze(0),
         frame_preds
     ], dim=0)
-    gt_full = frames.cpu()
+
     base_name = os.path.basename(video_path).split(".")[0]
     save_video(
         pred_full,
