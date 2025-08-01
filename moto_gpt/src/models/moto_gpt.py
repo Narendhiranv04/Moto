@@ -44,6 +44,8 @@ class MotoGPT(nn.Module):
             pred_discrete_arm_action=False, # NOTE 2024/12/17: predict discrete arm actions for berkeley_fanuc_manipulation
             use_timestep_embedding=False,
             use_latent_motion_pos_embedding=False,
+            use_in_context_learning=False,
+            num_demos=0,
             **kwargs
     ):
         super().__init__()
@@ -53,6 +55,8 @@ class MotoGPT(nn.Module):
         self.per_latent_motion_len = per_latent_motion_len
         self.latent_motion_codebook_size = latent_motion_codebook_size
         self.mask_latent_motion_probability = mask_latent_motion_probability
+        self.use_in_context_learning = use_in_context_learning
+        self.num_demos = num_demos
         
         self.latent_motion_pred = latent_motion_pred
         self.act_pred = act_pred
@@ -78,20 +82,19 @@ class MotoGPT(nn.Module):
         self.lang_feat_dim = lang_feat_dim
         self.img_feat_dim = img_feat_dim
         self.patch_feat_dim = patch_feat_dim
-
         
-        # Condition embedding
-        self.embed_condition = nn.Embedding(1, hidden_size)
+        if self.use_in_context_learning:
+            self.demo_start_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+            self.demo_end_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+            self.sep_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
 
-        # Embedding function for languages
-        self.embed_lang = torch.nn.Linear(self.lang_feat_dim, hidden_size)
-
-        # Embedding function for vision
-        self.embed_img = torch.nn.Linear(self.img_feat_dim, hidden_size)
-        self.embed_patch = torch.nn.Linear(self.patch_feat_dim, hidden_size)
-        
-        # Embedding functions for latent motions
-        self.embed_latent_motion = nn.Embedding(latent_motion_codebook_size, hidden_size)
+        # Latent Motion Embeddings
+        if self.latent_motion_pred:
+            self.embed_latent_motion = nn.Embedding(
+                self.latent_motion_codebook_size + self.num_special_tokens, 
+                self.hidden_size
+            )
+            self.latent_motion_queries = nn.Embedding(1, self.hidden_size)
 
         # Timestep Embeddings
         self.use_timestep_embedding = use_timestep_embedding
@@ -152,6 +155,7 @@ class MotoGPT(nn.Module):
                 latent_mask, # (b, t)
                 train=True,
                 lang_attention_mask=None,
+                demos=None,
                 **kwargs
     ):
         arm_action_preds = None
@@ -161,6 +165,26 @@ class MotoGPT(nn.Module):
         batch_size, _, c, h, w = rgb.shape
         sequence_length = self.sequence_length
         
+        demo_embeddings = None
+        if self.use_in_context_learning and demos is not None:
+            # demos shape: (b, K, 1, hidden_size)
+            K = self.num_demos
+            
+            # (b, K, hidden_size)
+            demos = demos.squeeze(2)
+            
+            demo_start = self.demo_start_token.repeat(batch_size, K, 1)
+            demo_end = self.demo_end_token.repeat(batch_size, K, 1)
+            
+            # (b, K, 1 + 1, hidden_size) -> (b, K, 3, hidden_size)
+            demos_with_markers = torch.cat([demo_start, demos.unsqueeze(2), demo_end], dim=2)
+
+            demos_interleaved = demos_with_markers.view(batch_size, -1, self.hidden_size)
+
+            sep_token = self.sep_token.repeat(batch_size, 1, 1)
+            
+            demo_embeddings = torch.cat([demos_interleaved, sep_token], dim=1)
+
 
         # Embed language
         if self.freeze_lang:
@@ -197,6 +221,8 @@ class MotoGPT(nn.Module):
         
         cond_stacked_inputs = torch.cat((lang_embeddings, patch_embeddings, obs_embeddings), dim=1)  # (b, n_cond_tokens, h)
 
+        if demo_embeddings is not None:
+            cond_stacked_inputs = torch.cat((demo_embeddings, cond_stacked_inputs), dim=1)
 
         if self.latent_motion_pred:
             latent_motion_queries = self.latent_motion_queries.weight  # (1, h)
@@ -310,7 +336,7 @@ class MotoGPT(nn.Module):
                 else:
                     latent_motion_id_preds, act_x = self.decode_latent_motion(
                         act_x=act_x, 
-                        stacked_inputs=stacked_inputs,
+                        stacked_inputs=stacked_inputs, 
                         stacked_attention_mask=stacked_attention_mask, 
                         latent_motion_query_token_start_i=latent_motion_query_token_start_i, 
                         n_cond_tokens=n_cond_tokens,

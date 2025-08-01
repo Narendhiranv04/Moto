@@ -12,6 +12,7 @@ from common.data.datasets import LMDBDataset_for_MotoGPT_RT1, LMDBDataset_for_Mo
 from common.data.mix_utils import BASE_STEPSIZE, DISPLAY_KEY
 from torchvision.transforms.v2 import Resize, InterpolationMode
 from torch.utils.data import ConcatDataset, WeightedRandomSampler
+from common.data.datasets import InContextDatasetWrapper
 
 data_type2dataset_cls = {
     'rt1': LMDBDataset_for_MotoGPT_RT1,
@@ -36,6 +37,9 @@ def load_dataset(data_config, extra_data_config):
     for k, v in extra_data_config.items():
         mapped_k = key_map.get(k, k)
         data_config[mapped_k] = v
+
+    if extra_data_config.get('use_in_context_learning', False):
+        faiss_index_path = extra_data_config['faiss_index_path']
 
     if data_type == 'mix':
         sub_data_configs = data_config.pop('sub_data_configs')
