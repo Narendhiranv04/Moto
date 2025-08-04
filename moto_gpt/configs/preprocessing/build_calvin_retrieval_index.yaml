@@ -1,0 +1,30 @@
+# @package _global_
+
+# This configuration is for the build_retrieval_index.py script
+
+# --- Paths ---
+# Path to the dataset configuration (e.g., Calvin)
+dataset_config_path: "moto_gpt/configs/data/calvin.yaml"
+
+# Path to a pre-trained MotoGPT model checkpoint
+# This is crucial for getting a good contrastive_mlp
+moto_gpt_path: "moto_gpt/checkpoints/moto_gpt_pretrained_on_calvin/"
+
+# Path to the Latent Motion Tokenizer checkpoint
+latent_motion_tokenizer_path: "latent_motion_tokenizer/checkpoints/latent_motion_tokenizer_trained_on_calvin/"
+
+# Directory where the FAISS index and data mapping will be saved
+save_path: "retrieval_indices/calvin_index"
+
+# --- Parameters ---
+# Number of frames in a sequence
+sequence_length: 2
+
+# Batch size for processing
+batch_size: 256
+
+# Number of workers for the dataloader
+num_workers: 8
+
+# Device to use for computation
+device: "cuda" 

@@ -1,0 +1,20 @@
+# @package _global_
+
+defaults:
+  - data_calvin-model_actPredFalse_motionPredTrue_visionMaeLarge_seq2_chunk5_maskProb0.5-train_lr0.0001_bs512-aug_shiftTrue_resizedCropFalse.yaml
+
+# This configuration enables In-Context Learning (ICL) by inheriting from a base config
+# and adding the ICL-specific parameters.
+
+# --- ICL Parameters ---
+model:
+  use_in_context_learning: True
+  num_demos: 5 # The total number of demos to retrieve, K
+
+train:
+  faiss_index_path: "retrieval_indices/calvin_index" # Path to the directory containing the FAISS index
+
+# You can override other parameters here if needed, for example:
+# train:
+#   lr_max: 0.00005
+#   num_epochs: 50 

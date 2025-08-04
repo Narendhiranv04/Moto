@@ -116,7 +116,8 @@ class LatentMotionTokenizer(nn.Module):
 
     def forward(self, cond_pixel_values, target_pixel_values,
                 return_recons_only=False, 
-                return_motion_token_ids_only=False): 
+                return_motion_token_ids_only=False,
+                return_embeddings=False): 
 
         # Tokenization
         with torch.no_grad():
@@ -131,6 +132,9 @@ class LatentMotionTokenizer(nn.Module):
         latent_motion_tokens_down = self.vq_down_resampler(latent_motion_tokens)
         quant, indices, commit_loss = self.vector_quantizer(latent_motion_tokens_down)
         
+        if return_embeddings:
+            return quant # (bs, motion_query_num, codebook_dim)
+
         # quant, indices, commit_loss = self.tokenize(cond_pixel_values, target_pixel_values)
 
         if return_motion_token_ids_only:
