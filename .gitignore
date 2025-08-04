@@ -1,4 +1,14 @@
-**/__pycache__
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
 data/*
 model_checkpoints
 **/local*
