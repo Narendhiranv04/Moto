@@ -1,0 +1,23 @@
+# This configuration is for building the FAISS retrieval index for the CALVIN dataset.
+
+# --- Paths ---
+# IMPORTANT: Update this path to point to the checkpoint directory of your pre-trained model from Stage 1.
+moto_gpt_path: "path/to/your/pretrained/moto-gpt/checkpoint" 
+
+# IMPORTANT: Update this path to point to your trained Latent Motion Tokenizer.
+latent_motion_tokenizer_path: "latent_motion_tokenizer/checkpoints/latent_motion_tokenizer_trained_on_calvin"
+
+# Path to the dataset configuration.
+dataset_config_path: "moto_gpt/configs/data/calvin.yaml"
+
+# Path where the final FAISS index and latent vectors will be saved.
+save_path: "retrieval_indices/calvin_index"
+
+
+# --- Hardware and Model Parameters ---
+device: "cuda:0"
+
+# These parameters should match the ones used during pre-training.
+sequence_length: 2
+batch_size: 256
+num_workers: 8

@@ -58,6 +58,11 @@ class MotoGPT(nn.Module):
         self.use_in_context_learning = use_in_context_learning
         self.num_demos = num_demos
         
+        if self.use_in_context_learning:
+            self.demo_latent_action_embedding = nn.Linear(self.hidden_size, self.hidden_size)
+            self.demo_start_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+            self.demo_end_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+        
         self.latent_motion_pred = latent_motion_pred
         self.act_pred = act_pred
 
@@ -167,23 +172,19 @@ class MotoGPT(nn.Module):
         
         demo_embeddings = None
         if self.use_in_context_learning and demos is not None:
-            # demos shape: (b, K, 1, hidden_size)
-            K = self.num_demos
+            # demos shape: (b, K, embed_dim)
+            # Project retrieved latent vectors into the model's hidden size
+            projected_demos = self.demo_latent_action_embedding(demos) # (b, K, hidden_size)
             
-            # (b, K, hidden_size)
-            demos = demos.squeeze(2)
+            # Add start and end tokens
+            demo_start = self.demo_start_token.repeat(batch_size, self.num_demos, 1)
+            demo_end = self.demo_end_token.repeat(batch_size, self.num_demos, 1)
             
-            demo_start = self.demo_start_token.repeat(batch_size, K, 1)
-            demo_end = self.demo_end_token.repeat(batch_size, K, 1)
-            
-            # (b, K, 1 + 1, hidden_size) -> (b, K, 3, hidden_size)
-            demos_with_markers = torch.cat([demo_start, demos.unsqueeze(2), demo_end], dim=2)
+            # (b, K, 3, hidden_size)
+            demos_with_markers = torch.cat([demo_start, projected_demos.unsqueeze(2), demo_end], dim=2)
 
-            demos_interleaved = demos_with_markers.view(batch_size, -1, self.hidden_size)
-
-            sep_token = self.sep_token.repeat(batch_size, 1, 1)
-            
-            demo_embeddings = torch.cat([demos_interleaved, sep_token], dim=1)
+            # (b, K*3, hidden_size)
+            demo_embeddings = demos_with_markers.view(batch_size, -1, self.hidden_size)
 
 
         # Embed language

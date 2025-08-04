@@ -119,7 +119,7 @@ class MotoGPT_Trainer:
         self.use_in_context_learning = moto_gpt_config.get('use_in_context_learning', False)
         if self.use_in_context_learning:
             self.faiss_index = faiss.read_index(os.path.join(moto_gpt_config.faiss_index_path, 'retrieval_index.faiss'))
-            self.index_to_data = np.load(os.path.join(moto_gpt_config.faiss_index_path, 'index_to_data.npy'), allow_pickle=True)
+            self.latent_vectors = np.load(os.path.join(moto_gpt_config.faiss_index_path, 'latent_vectors.npy'), allow_pickle=True)
             self.num_demos = moto_gpt_config.num_demos
 
 
@@ -366,32 +366,25 @@ class MotoGPT_Trainer:
                 path=os.path.join(visualization_dir, f"{self.process_index}-{i}")
             )
 
-    def retrieve_demos(self, latent_motion_embeddings):
+    def retrieve_demos(self, latent_motion_vectors):
         if not self.use_in_context_learning:
             return None
 
-        batch_size, seq_len, embed_dim = latent_motion_embeddings.shape
+        batch_size, embed_dim = latent_motion_vectors.shape
         
-        # Project the entire sequence of latent embeddings
-        projected_embeddings = self.contrastive_mlp(latent_motion_embeddings.view(batch_size * seq_len, embed_dim))
-        projected_embeddings = projected_embeddings.view(batch_size, seq_len, -1)
+        # Project the latent vectors to get the query embeddings
+        query_embeddings = self.contrastive_mlp(latent_motion_vectors)
+        query_embeddings = F.normalize(query_embeddings, dim=-1)
         
-        # This is a placeholder for batch retrieval. A real implementation would need to handle this more efficiently.
-        demos = []
-        for i in range(batch_size):
-            # For simplicity, we'll just retrieve demos for the last timestep
-            query_embedding = projected_embeddings[i, -1].detach().cpu().numpy().reshape(1, -1)
-            faiss.normalize_L2(query_embedding)
-            
-            _, indices = self.faiss_index.search(query_embedding, self.num_demos)
-            
-            retrieved_demos = []
-            for j in indices[0]:
-                retrieved_demos.append(self.index_to_data[j])
-            
-            demos.append(torch.tensor(np.array(retrieved_demos), device=self.device))
-            
-        return torch.stack(demos).unsqueeze(2) # (b, K, 1, embed_dim)
+        query_embeddings_np = query_embeddings.detach().cpu().numpy()
+        
+        # Search the FAISS index
+        _, indices = self.faiss_index.search(query_embeddings_np, self.num_demos)
+        
+        # Retrieve the corresponding latent vectors
+        retrieved_latent_vectors = self.latent_vectors[indices]
+        
+        return torch.tensor(retrieved_latent_vectors, device=self.device)
 
     def calculate_loss(self, batch, train):
         # image preprocessing
@@ -439,14 +432,14 @@ class MotoGPT_Trainer:
             # b, t, c, h, w = batch['rgb_future'].shape
             b, t, c, h, w = rgb_seq.shape
             t = t - 1
-            latent_motion_ids = self.latent_motion_tokenizer(
+            latent_motion_vectors, latent_motion_ids, _ = self.latent_motion_tokenizer.tokenize(
                 cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
                 target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
-                return_motion_token_ids_only=True
-            ).reshape(b, t, -1)
+            )
+            latent_motion_vectors = latent_motion_vectors.mean(dim=1) # (b*t, codebook_dim)
+            latent_motion_ids = latent_motion_ids.reshape(b, t, -1)
             
-            latent_motion_embeddings = self.latent_motion_tokenizer.vector_quantizer.get_codebook_entry(latent_motion_ids)
-            demos = self.retrieve_demos(latent_motion_embeddings)
+            demos = self.retrieve_demos(latent_motion_vectors.reshape(b, t, -1)[:, -1]) # Retrieve based on last timestep
         else:
             latent_motion_ids = None
             demos = None

@@ -39,8 +39,8 @@ def build_retrieval_index(cfg):
     latent_motion_tokenizer = load_model(cfg['latent_motion_tokenizer_path']).to(cfg['device'])
     latent_motion_tokenizer.eval()
     
-    all_embeddings = []
-    index_to_data = []
+    all_projected_embeddings = []
+    all_latent_vectors = []
 
     # Extract embeddings for every single timestep
     for i, batch in enumerate(tqdm(dataloader, desc="Extracting embeddings")):
@@ -54,34 +54,32 @@ def build_retrieval_index(cfg):
             cond_pixel_values = rgb_seq[:, :-1].reshape(-1, c, h, w)
             target_pixel_values = rgb_seq[:, 1:].reshape(-1, c, h, w)
             
-            latent_motion_ids = latent_motion_tokenizer(
-                cond_pixel_values=cond_pixel_values,
-                target_pixel_values=target_pixel_values,
-                return_motion_token_ids_only=True
-            ).reshape(b * t, -1)
-            
             # Get the continuous embeddings from the codebook
-            latent_motion_embeddings = latent_motion_tokenizer.vector_quantizer.get_codebook_entry(latent_motion_ids)
+            latent_motion_vectors, latent_motion_ids, _ = latent_motion_tokenizer.tokenize(
+                cond_pixel_values=cond_pixel_values,
+                target_pixel_values=target_pixel_values
+            )
+            latent_motion_vectors = latent_motion_vectors.mean(dim=1) # Average pooling over motion tokens
             
-            # Project into the meaningful embedding space
-            projected_embeddings = contrastive_mlp(latent_motion_embeddings)
+            # Project into the meaningful embedding space for searching
+            projected_embeddings = contrastive_mlp(latent_motion_vectors)
             
-            all_embeddings.append(projected_embeddings.cpu().numpy())
-            index_to_data.append(latent_motion_embeddings.cpu().numpy())
+            all_projected_embeddings.append(projected_embeddings.cpu().numpy())
+            all_latent_vectors.append(latent_motion_vectors.cpu().numpy())
 
-    all_embeddings = np.concatenate(all_embeddings, axis=0).astype(np.float32)
-    index_to_data = np.concatenate(index_to_data, axis=0).astype(np.float32)
+    all_projected_embeddings = np.concatenate(all_projected_embeddings, axis=0).astype(np.float32)
+    all_latent_vectors = np.concatenate(all_latent_vectors, axis=0).astype(np.float32)
     
-    # Build a single FAISS index
-    faiss.normalize_L2(all_embeddings)
-    index = faiss.IndexFlatIP(all_embeddings.shape[1])
-    index.add(all_embeddings)
+    # Build a single FAISS index on the projected embeddings
+    faiss.normalize_L2(all_projected_embeddings)
+    index = faiss.IndexFlatIP(all_projected_embeddings.shape[1])
+    index.add(all_projected_embeddings)
 
-    # Save index and data mapping
+    # Save index and the corresponding raw latent vectors
     save_path = cfg['save_path']
     os.makedirs(save_path, exist_ok=True)
     faiss.write_index(index, os.path.join(save_path, 'retrieval_index.faiss'))
-    np.save(os.path.join(save_path, 'index_to_data.npy'), index_to_data)
+    np.save(os.path.join(save_path, 'latent_vectors.npy'), all_latent_vectors)
     
     print(f"FAISS index and data mapping built and saved to {save_path}")
 
