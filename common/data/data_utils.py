@@ -12,7 +12,7 @@ from common.data.datasets import LMDBDataset_for_MotoGPT_RT1, LMDBDataset_for_Mo
 from common.data.mix_utils import BASE_STEPSIZE, DISPLAY_KEY
 from torchvision.transforms.v2 import Resize, InterpolationMode
 from torch.utils.data import ConcatDataset, WeightedRandomSampler
-from common.data.datasets import InContextDatasetWrapper
+from common.data.datasets import InContextDatasetWrapper, LMDBDataset
 
 data_type2dataset_cls = {
     'rt1': LMDBDataset_for_MotoGPT_RT1,
@@ -21,6 +21,7 @@ data_type2dataset_cls = {
     'video_json': JsonDataset_for_MotoGPT_Video,
     'video_npz': NpzDataset_for_MotoGPT_Video,
     'calvin': LMDBDataset_for_MotoGPT_CALVIN,
+    'lmdb': LMDBDataset
 }
 
 def load_dataset(data_config, extra_data_config):
@@ -81,8 +82,31 @@ def load_dataset(data_config, extra_data_config):
             eval_dataset = ConcatDataset(eval_datasets)
             
     else:
+        if 'rgb_shape' in data_config:
+            data_config['img_size'] = data_config.pop('rgb_shape')
+        
+        if 'preprocessor' in data_config:
+            preprocessor = hydra.utils.instantiate(data_config.pop('preprocessor'))
+        else:
+            preprocessor = None
+
         dataset_cls = data_type2dataset_cls[data_type]
-        train_dataset = dataset_cls(split='train', **data_config)
-        eval_dataset = dataset_cls(split='val', **data_config)
+        if data_type == 'lmdb':
+            train_config = data_config.copy()
+            train_config['lmdb_path'] = data_config['train_data_path']
+            train_dataset = dataset_cls(split=None, preprocessor=preprocessor, **train_config)
+            
+            val_config = data_config.copy()
+            val_config['lmdb_path'] = data_config['val_data_path']
+            eval_dataset = dataset_cls(split=None, preprocessor=preprocessor, **val_config)
+        else:
+            train_dataset = dataset_cls(split='train', preprocessor=preprocessor, **data_config)
+            eval_dataset = dataset_cls(split='val', preprocessor=preprocessor, **data_config)
+    
+    if extra_data_config.get('use_in_context_learning', False):
+        faiss_index_path = extra_data_config['faiss_index_path']
+        num_demos = extra_data_config['num_demos']
+        train_dataset = InContextDatasetWrapper(train_dataset, faiss_index_path, num_demos=num_demos)
+        eval_dataset = InContextDatasetWrapper(eval_dataset, faiss_index_path, num_demos=num_demos)
     
     return train_dataset, eval_dataset

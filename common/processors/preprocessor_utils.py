@@ -1,3 +1,4 @@
+import hydra
 import pyrootutils
 pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dotenv=True)
 from common.processors.rgb_preprocessors import RGB_PreProcessor
@@ -34,3 +35,18 @@ def get_rgb_preprocessor(model_vision_type, vision_aug_config={}):
         **vision_aug_config
     )
     return rgb_preprocessor
+
+
+class MultiProcessor:
+    def __init__(self, processors):
+        self.processors = [hydra.utils.instantiate(p) for p in processors]
+
+    def __call__(self, data):
+        for p in self.processors:
+            data = p(data)
+        return data
+
+class ActionPreprocessor:
+    def __call__(self, data):
+        # Actions are already in the correct format, so just pass them through.
+        return data

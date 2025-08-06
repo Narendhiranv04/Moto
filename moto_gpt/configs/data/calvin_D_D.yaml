@@ -1,0 +1,4 @@
+data_type: "calvin"
+lmdb_path: "datasets/lmdb_datasets/calvin_D_D_from_repo_dataset/training"
+rgb_shape: [224, 224]
+skip_frame: 5
